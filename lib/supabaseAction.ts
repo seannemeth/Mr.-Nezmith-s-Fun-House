@@ -2,11 +2,10 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * Server Component-safe Supabase client.
- * Reads cookies, but does NOT mutate them (Next forbids cookie mutation during render).
- * Cookie mutation happens in server actions (see supabaseAction) and middleware.
+ * Supabase client for Server Actions / Route Handlers.
+ * Server actions ARE allowed to set/remove cookies, which is required for auth persistence.
  */
-export function supabaseServer() {
+export function supabaseAction() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anon) {
@@ -20,8 +19,12 @@ export function supabaseServer() {
       get(name) {
         return cookieStore.get(name)?.value;
       },
-      set() {},
-      remove() {}
+      set(name, value, options) {
+        cookieStore.set({ name, value, ...options });
+      },
+      remove(name, options) {
+        cookieStore.set({ name, value: "", ...options });
+      }
     }
   });
 }

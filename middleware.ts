@@ -16,7 +16,7 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  // Touch session to keep auth cookies flowing
+  // Refresh session cookies when needed
   await supabase.auth.getUser();
   return res;
 }

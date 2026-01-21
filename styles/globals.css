@@ -40,3 +40,4 @@ a { color: inherit; text-decoration: none; }
 .col12 { grid-column: span 12; }
 @media (max-width: 900px) { .col6 { grid-column: span 12; } }
 .error { color: #b00020; font-size: 13px; margin-top: 10px; }
+.success { color: #0a7a2f; font-size: 13px; margin-top: 10px; }

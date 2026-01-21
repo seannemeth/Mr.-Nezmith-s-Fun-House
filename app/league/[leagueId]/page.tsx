@@ -1,11 +1,28 @@
 import Link from "next/link";
 import { supabaseServer } from "../../../lib/supabaseServer";
-import { advanceWeek } from "../../../app/actions";
+import { advanceWeekAction } from "../../../app/actions";
 
-export default async function LeagueDashboard({ params }: { params: { leagueId: string } }) {
+export default async function LeagueDashboard({
+  params,
+  searchParams
+}: {
+  params: { leagueId: string };
+  searchParams?: { msg?: string; err?: string };
+}) {
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) return <div className="card">Please sign in.</div>;
+  if (!userData.user) {
+    return (
+      <div className="card">
+        <div className="h1">League</div>
+        <p className="muted">Please sign in.</p>
+        <Link className="btn" href="/login">Sign in</Link>
+      </div>
+    );
+  }
+
+  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
+  const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
 
   const leagueId = params.leagueId;
 
@@ -38,7 +55,6 @@ export default async function LeagueDashboard({ params }: { params: { leagueId: 
     .order("wins", { ascending: false })
     .order("losses", { ascending: true });
 
-  // Current week games
   const { data: games } = await supabase
     .from("games")
     .select(`
@@ -62,12 +78,14 @@ export default async function LeagueDashboard({ params }: { params: { leagueId: 
             <div className="muted">
               Season {league.current_season}, Week {league.current_week} • Invite: <b>{league.invite_code}</b>
             </div>
+            {msg ? <p className="success">{msg}</p> : null}
+            {err ? <p className="error">{err}</p> : null}
           </div>
           <div className="row">
             <Link className="btn secondary" href={`/league/${leagueId}/standings`}>Standings</Link>
             <Link className="btn secondary" href={`/league/${leagueId}/schedule`}>Schedule</Link>
             {isCommissioner ? (
-              <form action={async () => { "use server"; await advanceWeek(leagueId); }}>
+              <form action={async () => { "use server"; await advanceWeekAction(leagueId); }}>
                 <button className="btn" type="submit">Advance Week</button>
               </form>
             ) : null}

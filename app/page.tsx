@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { supabaseServer } from "../lib/supabaseServer";
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams?: { msg?: string; err?: string } }) {
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
+
+  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
+  const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
 
   if (!userData.user) {
     return (
@@ -20,20 +23,14 @@ export default async function HomePage() {
     .select("role, league_id, leagues(name, invite_code, current_season, current_week)")
     .order("created_at", { ascending: false });
 
-  if (error) {
-    return (
-      <div className="card">
-        <div className="h1">Your Leagues</div>
-        <p className="error">{error.message}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Your Leagues</div>
         <p className="muted">Clean, text-based college football dynasties. Online with friends.</p>
+        {msg ? <p className="success">{msg}</p> : null}
+        {err ? <p className="error">{err}</p> : null}
+        {error ? <p className="error">{error.message}</p> : null}
       </div>
 
       {(memberships ?? []).map((m: any) => (

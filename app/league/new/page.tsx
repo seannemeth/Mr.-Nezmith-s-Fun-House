@@ -1,31 +1,21 @@
-import { createLeague } from "../../actions";
+import { createLeagueAction } from "../../actions";
 
 const DEFAULT_TEAMS = [
   "North Valley", "Coastal State", "Metro Tech", "Pine Ridge",
   "Capital University", "River City", "Lakeshore", "Mountain A&M"
 ];
 
-export default function NewLeaguePage() {
+export default function NewLeaguePage({ searchParams }: { searchParams?: { err?: string } }) {
+  const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
+
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Create League</div>
         <p className="muted">Text-first. Clean UI. Built for long-running online dynasties.</p>
+        {err ? <p className="error">{err}</p> : null}
 
-        <form
-          action={async (formData) => {
-            "use server";
-            const name = String(formData.get("name") || "My Dynasty League");
-            const rawTeams = String(formData.get("teams") || "");
-            const teamNames = rawTeams
-              .split("\n")
-              .map((s) => s.trim())
-              .filter(Boolean);
-
-            if (teamNames.length < 2) throw new Error("Add at least 2 teams.");
-            await createLeague(name, teamNames);
-          }}
-        >
+        <form action={createLeagueAction}>
           <label className="muted">League name</label>
           <input className="input" name="name" placeholder="Example: Friday Night Dynasty" defaultValue="My Dynasty League" />
           <div style={{ height: 12 }} />
