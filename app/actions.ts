@@ -133,6 +133,20 @@ export async function createLeagueAction(formData: FormData) {
 
   if (error) redirect(`/league/new?err=${enc(error.message)}`);
 
+  export async function deleteLeagueAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
+
+  const supabase = supabaseAction();
+  const { error } = await supabase.rpc("delete_league", { p_league_id: leagueId });
+
+  if (error) redirect(`/?err=${enc(error.message)}`);
+
+  revalidatePath("/");
+  redirect(`/?msg=${enc("League deleted.")}`);
+}
+
+
   revalidatePath("/");
   redirect(`/league/${data}`);
 }
