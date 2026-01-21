@@ -150,3 +150,40 @@ export async function createLeagueAction(formData: FormData) {
   revalidatePath("/");
   redirect(`/league/${data}`);
 }
+export async function updateTeamAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+
+  const name = String(formData.get("name") || "").trim();
+  const shortName = String(formData.get("short_name") || "").trim();
+
+  const prestige = Number(formData.get("prestige") || 50);
+  const off = Number(formData.get("rating_off") || 50);
+  const def = Number(formData.get("rating_def") || 50);
+  const st = Number(formData.get("rating_st") || 50);
+
+  if (!leagueId || !teamId) {
+    redirect(`/?err=${enc("Missing league/team id.")}`);
+  }
+
+  const supabase = supabaseAction();
+
+  const { error } = await supabase.rpc("update_team", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_name: name,
+    p_short_name: shortName,
+    p_prestige: prestige,
+    p_rating_off: off,
+    p_rating_def: def,
+    p_rating_st: st
+  });
+
+  if (error) {
+    redirect(`/league/${leagueId}/teams/${teamId}?err=${enc(error.message)}`);
+  }
+
+  revalidatePath(`/league/${leagueId}/teams`);
+  revalidatePath(`/league/${leagueId}/teams/${teamId}`);
+  redirect(`/league/${leagueId}/teams/${teamId}?msg=${enc("Team updated.")}`);
+}
