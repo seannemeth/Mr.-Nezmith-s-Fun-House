@@ -4,16 +4,14 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { supabaseAction } from "../lib/supabaseAction";
 
-// --- small helpers ---
 function enc(s: string) {
   return encodeURIComponent(s);
 }
 
-// ---------- LEAGUES ----------
+/** ===== LEAGUES ===== */
 
 export async function createLeagueAction(formData: FormData) {
   const name = String(formData.get("name") || "My Dynasty League").trim();
-  const preset = String(formData.get("preset") || "small").trim();
 
   const rawTeams = String(formData.get("teams") || "");
   const customTeams = rawTeams
@@ -21,7 +19,8 @@ export async function createLeagueAction(formData: FormData) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const SMALL_TEAMS = [
+  // Default small set so creation never fails
+  const DEFAULT_TEAMS = [
     "Chesapeake Turtles",
     "Miami Storm",
     "Lynchburg Fires",
@@ -32,14 +31,7 @@ export async function createLeagueAction(formData: FormData) {
     "Nashville Notes"
   ];
 
-  // If you imported a big list, plug it in here.
-  let teamNames: string[] = [];
-  if (preset === "custom") teamNames = customTeams;
-  else teamNames = SMALL_TEAMS;
-
-  if (teamNames.length < 2) {
-    redirect(`/league/new?err=${enc("Add at least 2 teams.")}`);
-  }
+  const teamNames = customTeams.length >= 2 ? customTeams : DEFAULT_TEAMS;
 
   const supabase = supabaseAction();
   const { data: userData } = await supabase.auth.getUser();
@@ -61,7 +53,7 @@ export async function joinLeagueAction(formData: FormData) {
   if (!code) redirect(`/league/join?err=${enc("Invite code required.")}`);
 
   const supabase = supabaseAction();
-  const { error, data } = await supabase.rpc("join_league_by_code", {
+  const { data, error } = await supabase.rpc("join_league_by_code", {
     p_invite_code: code
   });
 
@@ -97,7 +89,7 @@ export async function deleteLeagueAction(formData: FormData) {
   redirect(`/?msg=${enc("League deleted.")}`);
 }
 
-// ---------- TEAMS ----------
+/** ===== TEAMS ===== */
 
 export async function updateTeamAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
@@ -111,9 +103,7 @@ export async function updateTeamAction(formData: FormData) {
   const def = Number(formData.get("rating_def") || 50);
   const st = Number(formData.get("rating_st") || 50);
 
-  if (!leagueId || !teamId) {
-    redirect(`/?err=${enc("Missing league/team id.")}`);
-  }
+  if (!leagueId || !teamId) redirect(`/?err=${enc("Missing league/team id.")}`);
 
   const supabase = supabaseAction();
   const { error } = await supabase.rpc("update_team", {
