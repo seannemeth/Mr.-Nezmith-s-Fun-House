@@ -41,3 +41,30 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 900px) { .col6 { grid-column: span 12; } }
 .error { color: #b00020; font-size: 13px; margin-top: 10px; }
 .success { color: #0a7a2f; font-size: 13px; margin-top: 10px; }
+
+.subnav {
+  border: 1px solid #e6e8ee;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.subnavRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.subnavLink {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid #e6e8ee;
+  font-size: 13px;
+}
+
+.subnavLink:hover {
+  border-color: #d5d9e3;
+}
