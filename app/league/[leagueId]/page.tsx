@@ -2,15 +2,8 @@ import Link from "next/link";
 import { supabaseServer } from "../../../lib/supabaseServer";
 import { advanceWeekAction } from "../../actions";
 
-export default async function LeaguePage({
-  params,
-  searchParams
-}: {
-  params: { leagueId: string };
-  searchParams?: { msg?: string; err?: string };
-}) {
+export default async function LeaguePage({ params, searchParams }: { params: { leagueId: string }; searchParams?: { msg?: string; err?: string } }) {
   const supabase = supabaseServer();
-
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
 
@@ -43,15 +36,6 @@ export default async function LeaguePage({
 
   const isCommissioner = league.commissioner_id === userData.user.id;
 
-  const { data: teams } = await supabase
-    .from("teams")
-    .select("id,name,conference,wins,losses")
-    .eq("league_id", params.leagueId)
-    .order("wins", { ascending: false })
-    .order("losses", { ascending: true })
-    .order("name", { ascending: true })
-    .limit(8);
-
   const { data: games } = await supabase
     .from("games")
     .select("id,week,season,status,home_score,away_score,home_team_id,away_team_id")
@@ -60,15 +44,12 @@ export default async function LeaguePage({
     .eq("week", league.current_week)
     .order("created_at", { ascending: true });
 
-  // Map teamId -> name for quick display
   const { data: weekTeams } = await supabase
     .from("teams")
     .select("id,name")
     .eq("league_id", params.leagueId);
 
-  const teamNameById = new Map<string, string>(
-    (weekTeams ?? []).map((t: any) => [t.id, t.name])
-  );
+  const teamNameById = new Map<string, string>((weekTeams ?? []).map((t: any) => [t.id, t.name]));
 
   return (
     <div className="grid">
@@ -76,10 +57,7 @@ export default async function LeaguePage({
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="h1">{league.name}</div>
-            <p className="muted">
-              Season {league.current_season} • Week {league.current_week} • Invite{" "}
-              <b>{league.invite_code}</b>
-            </p>
+            <p className="muted">Season {league.current_season} • Week {league.current_week} • Invite <b>{league.invite_code}</b></p>
             {msg ? <p className="success">{msg}</p> : null}
             {err ? <p className="error">{err}</p> : null}
           </div>
@@ -92,37 +70,28 @@ export default async function LeaguePage({
         </div>
       </div>
 
-      <div className="card col6">
+      <div className="card col12">
         <div className="h2">This Week</div>
-        <p className="muted">Games scheduled for Week {league.current_week}.</p>
+        <p className="muted">Week {league.current_week} matchups.</p>
 
         <table className="table">
           <thead>
-            <tr>
-              <th>Matchup</th>
-              <th>Status</th>
-            </tr>
+            <tr><th>Matchup</th><th>Status</th></tr>
           </thead>
           <tbody>
             {(games ?? []).map((g: any) => {
               const home = teamNameById.get(g.home_team_id) ?? "Home";
               const away = teamNameById.get(g.away_team_id) ?? "Away";
-              const score =
-                g.status === "final"
-                  ? `${away} ${g.away_score} @ ${home} ${g.home_score}`
-                  : `${away} @ ${home}`;
-
+              const line = g.status === "final" ? `${away} ${g.away_score} @ ${home} ${g.home_score}` : `${away} @ ${home}`;
               return (
                 <tr key={g.id}>
-                  <td>{score}</td>
+                  <td>{line}</td>
                   <td>{g.status}</td>
                 </tr>
               );
             })}
             {(!games || games.length === 0) ? (
-              <tr>
-                <td className="muted" colSpan={2}>No games scheduled.</td>
-              </tr>
+              <tr><td className="muted" colSpan={2}>No games scheduled.</td></tr>
             ) : null}
           </tbody>
         </table>
@@ -133,41 +102,8 @@ export default async function LeaguePage({
             <button className="btn" type="submit">Advance Week</button>
           </form>
         ) : (
-          <p className="muted" style={{ marginTop: 12 }}>
-            Only the commissioner can advance the week.
-          </p>
+          <p className="muted" style={{ marginTop: 12 }}>Only the commissioner can advance the week.</p>
         )}
-      </div>
-
-      <div className="card col6">
-        <div className="h2">Top Teams</div>
-        <p className="muted">Snapshot of current leaders.</p>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Team</th>
-              <th>Conf</th>
-              <th>W-L</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(teams ?? []).map((t: any) => (
-              <tr key={t.id}>
-                <td>
-                  <Link href={`/league/${params.leagueId}/teams/${t.id}`}>{t.name}</Link>
-                </td>
-                <td>{t.conference ?? "Independent"}</td>
-                <td>{t.wins}-{t.losses}</td>
-              </tr>
-            ))}
-            {(!teams || teams.length === 0) ? (
-              <tr>
-                <td className="muted" colSpan={3}>No teams found.</td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
       </div>
     </div>
   );

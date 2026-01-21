@@ -1,18 +1,18 @@
-# CFB Text Dynasty (MVP)
+# CFB Text Dynasty (Fixed)
 
-Clean, text-first, online dynasty scaffold using:
-- Next.js (App Router)
-- Supabase (Auth + Postgres)
-- Vercel for hosting
+## Deploy
+- Push to GitHub
+- Import in Vercel
+- Set env vars:
+  - NEXT_PUBLIC_SUPABASE_URL
+  - NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-## Setup
-1. Create a Supabase project
-2. Run `supabase/schema.sql` in Supabase SQL Editor
-3. In Vercel, set env vars:
-   - NEXT_PUBLIC_SUPABASE_URL
-   - NEXT_PUBLIC_SUPABASE_ANON_KEY
-4. Deploy
+## Supabase
+Run `supabase/schema.sql` in Supabase SQL Editor.
 
-## Auth note
-If Supabase Email confirmations are enabled, users must confirm their email before they can sign in.
-The app shows a friendly message instead of crashing.
+## Gameplay loop (current)
+- Create league (seeds teams + conferences)
+- View Teams / Standings / Schedule
+- Commissioner can Advance Week (sim + standings)
+
+This is a solid playable foundation to expand recruiting, portal, NIL, coaching carousel, and multi-season progression.

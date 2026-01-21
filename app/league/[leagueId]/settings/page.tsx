@@ -1,8 +1,10 @@
-export default function LeagueSettingsPage() {
+import Link from "next/link";
+export default function Page() {
   return (
     <div className="card">
       <div className="h1">League Settings</div>
-      <p className="muted">Coming soon: commissioner tools, invite management, and rules.</p>
+      <p className="muted">Coming soon. This page is scaffolded so navigation works.</p>
+      <Link className="btn secondary" href="..">Back</Link>
     </div>
   );
 }

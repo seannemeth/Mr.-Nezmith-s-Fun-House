@@ -2,15 +2,8 @@ import Link from "next/link";
 import { supabaseServer } from "../../../../../lib/supabaseServer";
 import { updateTeamAction } from "../../../../actions";
 
-export default async function TeamPage({
-  params,
-  searchParams
-}: {
-  params: { leagueId: string; teamId: string };
-  searchParams?: { err?: string; msg?: string };
-}) {
+export default async function TeamPage({ params, searchParams }: { params: { leagueId: string; teamId: string }; searchParams?: { err?: string; msg?: string } }) {
   const supabase = supabaseServer();
-
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
 
@@ -25,24 +18,10 @@ export default async function TeamPage({
     );
   }
 
-  const { data: league, error: leagueError } = await supabase
-    .from("leagues")
-    .select("id,name,commissioner_id")
-    .eq("id", params.leagueId)
-    .single();
-
-  if (leagueError || !league) {
-    return (
-      <div className="card">
-        <div className="h1">Team</div>
-        <p className="error">{leagueError?.message ?? "League not found."}</p>
-      </div>
-    );
-  }
-
+  const { data: league } = await supabase.from("leagues").select("id,name,commissioner_id").eq("id", params.leagueId).single();
   const { data: team, error: teamError } = await supabase
     .from("teams")
-    .select("id,league_id,name,short_name,wins,losses,prestige,rating_off,rating_def,rating_st")
+    .select("id,league_id,name,short_name,conference,wins,losses,prestige,rating_off,rating_def,rating_st")
     .eq("id", params.teamId)
     .eq("league_id", params.leagueId)
     .single();
@@ -57,7 +36,7 @@ export default async function TeamPage({
     );
   }
 
-  const isCommissioner = league.commissioner_id === userData.user.id;
+  const isCommissioner = league?.commissioner_id === userData.user.id;
 
   return (
     <div className="grid">
@@ -65,13 +44,10 @@ export default async function TeamPage({
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="h1">{team.name}</div>
-            <p className="muted">
-              {league.name} • Record {team.wins}-{team.losses}
-            </p>
+            <p className="muted">{league?.name} • {team.conference} • Record {team.wins}-{team.losses}</p>
             {msg ? <p className="success">{msg}</p> : null}
             {err ? <p className="error">{err}</p> : null}
           </div>
-
           <div className="row">
             <Link className="btn secondary" href={`/league/${params.leagueId}/teams`}>Teams</Link>
             <Link className="btn secondary" href={`/league/${params.leagueId}`}>League</Link>
@@ -83,20 +59,17 @@ export default async function TeamPage({
         <div className="h2">Ratings</div>
         <table className="table">
           <tbody>
+            <tr><th>Conference</th><td>{team.conference}</td></tr>
             <tr><th>Prestige</th><td>{team.prestige}</td></tr>
             <tr><th>OFF</th><td>{team.rating_off}</td></tr>
             <tr><th>DEF</th><td>{team.rating_def}</td></tr>
             <tr><th>ST</th><td>{team.rating_st}</td></tr>
           </tbody>
         </table>
-        <p className="muted" style={{ marginTop: 10 }}>
-          These numbers drive sim results and (later) recruiting and transfer behavior.
-        </p>
       </div>
 
       <div className="card col6">
         <div className="h2">Edit Team</div>
-
         {isCommissioner ? (
           <form action={updateTeamAction}>
             <input type="hidden" name="leagueId" value={params.leagueId} />
@@ -131,14 +104,10 @@ export default async function TeamPage({
 
             <div style={{ height: 12 }} />
             <button className="btn" type="submit">Save Changes</button>
-            <p className="muted" style={{ marginTop: 10 }}>
-              Commissioner-only. Updates apply to league simulation immediately.
-            </p>
+            <p className="muted" style={{ marginTop: 10 }}>Commissioner-only.</p>
           </form>
         ) : (
-          <p className="muted">
-            Only the commissioner can edit team details right now.
-          </p>
+          <p className="muted">Only the commissioner can edit team details.</p>
         )}
       </div>
     </div>

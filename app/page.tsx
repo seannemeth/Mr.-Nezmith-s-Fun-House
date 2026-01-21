@@ -2,11 +2,7 @@ import Link from "next/link";
 import { supabaseServer } from "../lib/supabaseServer";
 import { deleteLeagueAction } from "./actions";
 
-export default async function HomePage({
-  searchParams
-}: {
-  searchParams?: { msg?: string; err?: string };
-}) {
+export default async function HomePage({ searchParams }: { searchParams?: { msg?: string; err?: string } }) {
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
 
@@ -27,7 +23,7 @@ export default async function HomePage({
 
   const { data: memberships, error } = await supabase
     .from("memberships")
-    .select("role, league_id, leagues(name, invite_code, current_season, current_week)")
+    .select("role, league_id, created_at, leagues(name, invite_code, current_season, current_week)")
     .order("created_at", { ascending: false });
 
   return (
@@ -45,13 +41,9 @@ export default async function HomePage({
         return (
           <div key={m.league_id} className="card col6">
             <div className="h2">{league?.name ?? "League"}</div>
-            <div className="muted">
-              Season {league?.current_season ?? "—"}, Week {league?.current_week ?? "—"}
-            </div>
+            <div className="muted">Season {league?.current_season ?? "—"}, Week {league?.current_week ?? "—"}</div>
             <div className="muted">Role: {m.role}</div>
-            <div className="muted">
-              Invite: <b>{league?.invite_code ?? "—"}</b>
-            </div>
+            <div className="muted">Invite: <b>{league?.invite_code ?? "—"}</b></div>
 
             <div className="row" style={{ marginTop: 12 }}>
               <Link className="btn" href={`/league/${m.league_id}`}>Open</Link>
@@ -59,9 +51,7 @@ export default async function HomePage({
               {m.role === "commissioner" ? (
                 <form action={deleteLeagueAction}>
                   <input type="hidden" name="leagueId" value={m.league_id} />
-                  <button className="btn secondary" type="submit">
-                    Delete
-                  </button>
+                  <button className="btn danger" type="submit">Delete</button>
                 </form>
               ) : null}
             </div>

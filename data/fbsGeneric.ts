@@ -1,64 +1,33 @@
-// data/fbsGeneric.ts
 export type SeedTeam = { name: string; short_name?: string; conference: string };
-
+// Starter set. Expand later.
 export const FBS_GENERIC: SeedTeam[] = [
-  // Atlantic
-  { name: "Boston Scholars", conference: "Atlantic" },
-  { name: "Raleigh Foxes", conference: "Atlantic" },
-  { name: "Richmond Knights", conference: "Atlantic" },
-  { name: "Pittsburgh Iron", conference: "Atlantic" },
+  { name: "Chesapeake Turtles", conference: "Atlantic" },
+  { name: "Annapolis Anchors", conference: "Atlantic" },
+  { name: "Baltimore Harbors", conference: "Atlantic" },
+  { name: "Dover Foxes", conference: "Atlantic" },
 
-  // Coastal
   { name: "Miami Storm", conference: "Coastal" },
   { name: "Tampa Tides", conference: "Coastal" },
-  { name: "Norfolk Mariners", conference: "Coastal" },
-  { name: "Charleston Palms", conference: "Coastal" },
+  { name: "Orlando Knights", conference: "Coastal" },
+  { name: "Jacksonville Waves", conference: "Coastal" },
 
-  // Great Lakes
-  { name: "Chicago Sparks", conference: "Great Lakes" },
-  { name: "Detroit Wolves", conference: "Great Lakes" },
-  { name: "Cleveland Owls", conference: "Great Lakes" },
-  { name: "Madison Northwoods", conference: "Great Lakes" },
+  { name: "Lynchburg Fires", conference: "Appalachian" },
+  { name: "Roanoke Ridges", conference: "Appalachian" },
+  { name: "Knoxville Ridge", conference: "Appalachian" },
+  { name: "Asheville Oaks", conference: "Appalachian" },
 
-  // Plains
-  { name: "Lincoln Plainsmen", conference: "Plains" },
-  { name: "Wichita Wind", conference: "Plains" },
-  { name: "Tulsa Oilers", conference: "Plains" },
-  { name: "Omaha Rivermen", conference: "Plains" },
+  { name: "Austin Rangers", conference: "Plains" },
+  { name: "Dallas Stallions", conference: "Plains" },
+  { name: "Houston Comets", conference: "Plains" },
+  { name: "San Antonio Runners", conference: "Plains" },
 
-  // Mountain
   { name: "Boise Peaks", conference: "Mountain" },
   { name: "Denver Summit", conference: "Mountain" },
   { name: "Salt Lake Peaks", conference: "Mountain" },
   { name: "Albuquerque Suns", conference: "Mountain" },
 
-  // Pacific
   { name: "Seattle Rain", conference: "Pacific" },
-  { name: "Portland Timber", conference: "Pacific" },
+  { name: "Portland Pines", conference: "Pacific" },
   { name: "San Diego Waves", conference: "Pacific" },
-  { name: "San Jose Hawks", conference: "Pacific" },
-
-  // South
-  { name: "Baton Rouge Stripes", conference: "South" },
-  { name: "Birmingham Forge", conference: "South" },
-  { name: "Memphis Blues", conference: "South" },
-  { name: "Nashville Notes", conference: "South" },
-
-  // Mid-America
-  { name: "Toledo Rockets", conference: "Mid-America" },
-  { name: "Akron Zips", conference: "Mid-America" },
-  { name: "Dayton Flyers", conference: "Mid-America" },
-  { name: "Columbus Union", conference: "Mid-America" },
-
-  // Chesapeake (example of your “Terps vibe” without real IP)
-  { name: "Chesapeake Turtles", conference: "Chesapeake" },
-  { name: "Annapolis Anchors", conference: "Chesapeake" },
-  { name: "Baltimore Harbors", conference: "Chesapeake" },
-  { name: "Dover Foxes", conference: "Chesapeake" },
-
-  // Independent
-  { name: "Las Vegas Lights", conference: "Independent" },
-  { name: "Austin Rangers", conference: "Independent" },
-  { name: "Lynchburg Fires", conference: "Independent" },
-  { name: "Phoenix Suns", conference: "Independent" }
+  { name: "San Jose Hawks", conference: "Pacific" }
 ];

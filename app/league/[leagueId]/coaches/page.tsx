@@ -1,8 +1,10 @@
-export default function CoachesPage() {
+import Link from "next/link";
+export default function Page() {
   return (
     <div className="card">
       <div className="h1">Coaches</div>
-      <p className="muted">Coming soon: staff roles, coaching carousel, and upgrades.</p>
+      <p className="muted">Coming soon. This page is scaffolded so navigation works.</p>
+      <Link className="btn secondary" href="..">Back</Link>
     </div>
   );
 }
