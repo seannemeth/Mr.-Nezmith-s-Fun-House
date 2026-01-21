@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { supabaseServer } from "../../../../lib/supabaseServer";
+import { supabaseServer } from "../../../lib/supabaseServer";
 
 export default async function TeamsPage({
   params,
