@@ -1,8 +1,13 @@
+
 import Link from "next/link";
 import { supabaseServer } from "../lib/supabaseServer";
 import { deleteLeagueAction } from "./actions";
 
-export default async function HomePage({ searchParams }: { searchParams?: { msg?: string; err?: string } }) {
+export default async function HomePage({
+  searchParams
+}: {
+  searchParams?: { msg?: string; err?: string };
+}) {
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
 
@@ -12,7 +17,7 @@ export default async function HomePage({ searchParams }: { searchParams?: { msg?
   if (!userData.user) {
     return (
       <div className="card">
-        <div className="h1">CFB Text Dynasty</div>
+        <div className="h1">CFB Dynasty</div>
         <p className="muted">Sign in to create or join an online league.</p>
         {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
@@ -23,14 +28,14 @@ export default async function HomePage({ searchParams }: { searchParams?: { msg?
 
   const { data: memberships, error } = await supabase
     .from("memberships")
-    .select("role, league_id, created_at, leagues(name, invite_code, current_season, current_week)")
+    .select("role, team_id, league_id, leagues(name, invite_code, current_season, current_week)")
     .order("created_at", { ascending: false });
 
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Your Leagues</div>
-        <p className="muted">Create a league, invite friends, and advance the season.</p>
+        <p className="muted">Create a league, invite friends, pick a team & role, and advance the season.</p>
         {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
         {error ? <p className="error">{error.message}</p> : null}
@@ -55,12 +60,6 @@ export default async function HomePage({ searchParams }: { searchParams?: { msg?
                 </form>
               ) : null}
             </div>
-
-            {m.role === "commissioner" ? (
-              <p className="muted" style={{ marginTop: 10 }}>
-                Delete removes the league and all its data for every member.
-              </p>
-            ) : null}
           </div>
         );
       })}

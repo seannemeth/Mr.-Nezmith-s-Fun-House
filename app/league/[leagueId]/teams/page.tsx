@@ -1,23 +1,24 @@
+
 import Link from "next/link";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
-export default async function TeamsPage({ params, searchParams }: { params: { leagueId: string }; searchParams?: { err?: string; msg?: string } }) {
+export default async function TeamsPage({
+  params,
+  searchParams
+}: {
+  params: { leagueId: string };
+  searchParams?: { err?: string; msg?: string };
+}) {
   const supabase = supabaseServer();
+
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return (
-      <div className="card">
-        <div className="h1">Teams</div>
-        <p className="muted">Please sign in.</p>
-        <Link className="btn" href="/login">Sign in</Link>
-      </div>
-    );
-  }
-
-  const { data: league } = await supabase.from("leagues").select("id,name,current_season,current_week").eq("id", params.leagueId).single();
+  const { data: league } = await supabase
+    .from("leagues")
+    .select("id,name,current_season,current_week")
+    .eq("id", params.leagueId)
+    .single();
 
   const { data: teams, error } = await supabase
     .from("teams")
@@ -32,7 +33,9 @@ export default async function TeamsPage({ params, searchParams }: { params: { le
     <div className="grid">
       <div className="card col12">
         <div className="h1">Teams — {league?.name}</div>
-        <p className="muted">Season {league?.current_season}, Week {league?.current_week}. Click a team to view/edit ratings.</p>
+        <p className="muted">
+          Season {league?.current_season}, Week {league?.current_week}. Click a team to view/edit ratings.
+        </p>
         {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
         {error ? <p className="error">{error.message}</p> : null}
@@ -42,7 +45,13 @@ export default async function TeamsPage({ params, searchParams }: { params: { le
         <table className="table">
           <thead>
             <tr>
-              <th>Team</th><th>Conf</th><th>W-L</th><th>Prestige</th><th>OFF</th><th>DEF</th><th>ST</th>
+              <th>Team</th>
+              <th>Conf</th>
+              <th>W-L</th>
+              <th>Prestige</th>
+              <th>OFF</th>
+              <th>DEF</th>
+              <th>ST</th>
             </tr>
           </thead>
           <tbody>

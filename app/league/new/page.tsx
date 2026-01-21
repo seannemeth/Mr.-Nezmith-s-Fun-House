@@ -1,15 +1,14 @@
+
 import { createLeagueAction } from "../../actions";
 
-export default function NewLeaguePage({ searchParams }: { searchParams?: { err?: string; msg?: string } }) {
+export default function NewLeaguePage({ searchParams }: { searchParams?: { err?: string } }) {
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
 
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Create League</div>
         <p className="muted">Choose a preset team set, then create your dynasty.</p>
-        {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
 
         <form action={createLeagueAction}>
@@ -19,7 +18,7 @@ export default function NewLeaguePage({ searchParams }: { searchParams?: { err?:
 
           <label className="muted">Team preset</label>
           <select className="input" name="preset" defaultValue="fbs">
-            <option value="fbs">FBS-style (generic, with conferences)</option>
+            <option value="fbs">Generic FBS (100+ teams, with conferences)</option>
             <option value="small">Small (8 teams)</option>
             <option value="custom">Custom (use the box below)</option>
           </select>

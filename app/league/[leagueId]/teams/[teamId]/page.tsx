@@ -1,9 +1,17 @@
+
 import Link from "next/link";
 import { supabaseServer } from "../../../../../lib/supabaseServer";
 import { updateTeamAction } from "../../../../actions";
 
-export default async function TeamPage({ params, searchParams }: { params: { leagueId: string; teamId: string }; searchParams?: { err?: string; msg?: string } }) {
+export default async function TeamPage({
+  params,
+  searchParams
+}: {
+  params: { leagueId: string; teamId: string };
+  searchParams?: { err?: string; msg?: string };
+}) {
   const supabase = supabaseServer();
+
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
 
@@ -18,7 +26,12 @@ export default async function TeamPage({ params, searchParams }: { params: { lea
     );
   }
 
-  const { data: league } = await supabase.from("leagues").select("id,name,commissioner_id").eq("id", params.leagueId).single();
+  const { data: league } = await supabase
+    .from("leagues")
+    .select("id,name,commissioner_id")
+    .eq("id", params.leagueId)
+    .single();
+
   const { data: team, error: teamError } = await supabase
     .from("teams")
     .select("id,league_id,name,short_name,conference,wins,losses,prestige,rating_off,rating_def,rating_st")
@@ -44,7 +57,9 @@ export default async function TeamPage({ params, searchParams }: { params: { lea
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="h1">{team.name}</div>
-            <p className="muted">{league?.name} • {team.conference} • Record {team.wins}-{team.losses}</p>
+            <p className="muted">
+              {league?.name} • {team.conference} • Record {team.wins}-{team.losses}
+            </p>
             {msg ? <p className="success">{msg}</p> : null}
             {err ? <p className="error">{err}</p> : null}
           </div>
@@ -59,7 +74,6 @@ export default async function TeamPage({ params, searchParams }: { params: { lea
         <div className="h2">Ratings</div>
         <table className="table">
           <tbody>
-            <tr><th>Conference</th><td>{team.conference}</td></tr>
             <tr><th>Prestige</th><td>{team.prestige}</td></tr>
             <tr><th>OFF</th><td>{team.rating_off}</td></tr>
             <tr><th>DEF</th><td>{team.rating_def}</td></tr>
@@ -83,6 +97,10 @@ export default async function TeamPage({ params, searchParams }: { params: { lea
             <input className="input" name="short_name" defaultValue={team.short_name} />
             <div style={{ height: 10 }} />
 
+            <label className="muted">Conference</label>
+            <input className="input" name="conference" defaultValue={team.conference} />
+            <div style={{ height: 10 }} />
+
             <div className="grid">
               <div className="col6">
                 <label className="muted">Prestige (0–100)</label>
@@ -104,10 +122,9 @@ export default async function TeamPage({ params, searchParams }: { params: { lea
 
             <div style={{ height: 12 }} />
             <button className="btn" type="submit">Save Changes</button>
-            <p className="muted" style={{ marginTop: 10 }}>Commissioner-only.</p>
           </form>
         ) : (
-          <p className="muted">Only the commissioner can edit team details.</p>
+          <p className="muted">Only the commissioner can edit team details right now.</p>
         )}
       </div>
     </div>

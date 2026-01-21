@@ -1,18 +1,17 @@
-# CFB Text Dynasty (Fixed)
+
+# CFB Dynasty (Text-Based)
+
+A minimal, text-first college-football dynasty manager inspired by modern sports sims.
 
 ## Deploy
-- Push to GitHub
-- Import in Vercel
-- Set env vars:
-  - NEXT_PUBLIC_SUPABASE_URL
-  - NEXT_PUBLIC_SUPABASE_ANON_KEY
+1. Create a Supabase project.
+2. Supabase SQL Editor: run `supabase/schema.sql`.
+3. Vercel env vars:
+   - NEXT_PUBLIC_SUPABASE_URL
+   - NEXT_PUBLIC_SUPABASE_ANON_KEY
+4. Deploy to Vercel.
 
-## Supabase
-Run `supabase/schema.sql` in Supabase SQL Editor.
-
-## Gameplay loop (current)
-- Create league (seeds teams + conferences)
-- View Teams / Standings / Schedule
-- Commissioner can Advance Week (sim + standings)
-
-This is a solid playable foundation to expand recruiting, portal, NIL, coaching carousel, and multi-season progression.
+## Notes
+- All writes happen via Supabase RPC functions (security definer) to avoid RLS pain.
+- Team/role selection is in League -> Settings.
+- Commissioner initializes Recruiting/Portal/NIL from the League dashboard (button).

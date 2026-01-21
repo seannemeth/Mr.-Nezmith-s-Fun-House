@@ -1,9 +1,17 @@
+
 import Link from "next/link";
 import { supabaseServer } from "../../../lib/supabaseServer";
-import { advanceWeekAction } from "../../actions";
+import { advanceWeekAction, initSeasonProgramsAction } from "../../actions";
 
-export default async function LeaguePage({ params, searchParams }: { params: { leagueId: string }; searchParams?: { msg?: string; err?: string } }) {
+export default async function LeaguePage({
+  params,
+  searchParams
+}: {
+  params: { leagueId: string };
+  searchParams?: { msg?: string; err?: string };
+}) {
   const supabase = supabaseServer();
+
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
 
@@ -49,7 +57,17 @@ export default async function LeaguePage({ params, searchParams }: { params: { l
     .select("id,name")
     .eq("league_id", params.leagueId);
 
-  const teamNameById = new Map<string, string>((weekTeams ?? []).map((t: any) => [t.id, t.name]));
+  const teamNameById = new Map<string, string>(
+    (weekTeams ?? []).map((t: any) => [t.id, t.name])
+  );
+
+  // Read my membership (team/role selection)
+  const { data: myMembership } = await supabase
+    .from("memberships")
+    .select("role, team_id")
+    .eq("league_id", params.leagueId)
+    .eq("user_id", userData.user.id)
+    .single();
 
   return (
     <div className="grid">
@@ -57,20 +75,26 @@ export default async function LeaguePage({ params, searchParams }: { params: { l
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="h1">{league.name}</div>
-            <p className="muted">Season {league.current_season} • Week {league.current_week} • Invite <b>{league.invite_code}</b></p>
+            <p className="muted">
+              Season {league.current_season} • Week {league.current_week} • Invite <b>{league.invite_code}</b>
+            </p>
+            <p className="muted">
+              Your role: <b>{myMembership?.role ?? "member"}</b>{" "}
+              {myMembership?.team_id ? "(team selected)" : "(no team yet)"}
+            </p>
             {msg ? <p className="success">{msg}</p> : null}
             {err ? <p className="error">{err}</p> : null}
           </div>
 
           <div className="row">
+            <Link className="btn secondary" href={`/league/${params.leagueId}/settings`}>Settings</Link>
             <Link className="btn secondary" href={`/league/${params.leagueId}/teams`}>Teams</Link>
-            <Link className="btn secondary" href={`/league/${params.leagueId}/schedule`}>Schedule</Link>
-            <Link className="btn secondary" href={`/league/${params.leagueId}/standings`}>Standings</Link>
+            <Link className="btn secondary" href={`/league/${params.leagueId}/recruiting`}>Recruiting</Link>
           </div>
         </div>
       </div>
 
-      <div className="card col12">
+      <div className="card col6">
         <div className="h2">This Week</div>
         <p className="muted">Week {league.current_week} matchups.</p>
 
@@ -82,7 +106,10 @@ export default async function LeaguePage({ params, searchParams }: { params: { l
             {(games ?? []).map((g: any) => {
               const home = teamNameById.get(g.home_team_id) ?? "Home";
               const away = teamNameById.get(g.away_team_id) ?? "Away";
-              const line = g.status === "final" ? `${away} ${g.away_score} @ ${home} ${g.home_score}` : `${away} @ ${home}`;
+              const line =
+                g.status === "final"
+                  ? `${away} ${g.away_score} @ ${home} ${g.home_score}`
+                  : `${away} @ ${home}`;
               return (
                 <tr key={g.id}>
                   <td>{line}</td>
@@ -97,13 +124,32 @@ export default async function LeaguePage({ params, searchParams }: { params: { l
         </table>
 
         {isCommissioner ? (
-          <form action={advanceWeekAction} style={{ marginTop: 12 }}>
-            <input type="hidden" name="leagueId" value={params.leagueId} />
-            <button className="btn" type="submit">Advance Week</button>
-          </form>
+          <div className="row" style={{ marginTop: 12 }}>
+            <form action={advanceWeekAction}>
+              <input type="hidden" name="leagueId" value={params.leagueId} />
+              <button className="btn" type="submit">Advance Week</button>
+            </form>
+
+            <form action={initSeasonProgramsAction}>
+              <input type="hidden" name="leagueId" value={params.leagueId} />
+              <button className="btn secondary" type="submit">Init Recruiting/Portal/NIL</button>
+            </form>
+          </div>
         ) : (
-          <p className="muted" style={{ marginTop: 12 }}>Only the commissioner can advance the week.</p>
+          <p className="muted" style={{ marginTop: 12 }}>
+            Only the commissioner can advance the week or initialize offseason programs.
+          </p>
         )}
+      </div>
+
+      <div className="card col6">
+        <div className="h2">Next Steps</div>
+        <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
+          <li>Pick a team and role in <b>Settings</b>.</li>
+          <li>Recruiting: allocate weekly points to prospects and NIL deals.</li>
+          <li>Portal: bid points for transfer targets.</li>
+          <li>Coaches: spend skill points to improve recruiting and sim output.</li>
+        </ul>
       </div>
     </div>
   );
