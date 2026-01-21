@@ -93,3 +93,46 @@ export async function advanceWeekAction(leagueId: string) {
   revalidatePath(`/league/${leagueId}/schedule`);
   redirect(`/league/${leagueId}?msg=${enc("Week advanced.")}`);
 }
+import { FBS_TEAMS } from "../data/fbsTeams";
+// (If your path differs, adjust to: "../../data/fbsTeams" accordingly)
+// In your repo structure I provided, put `data/` at the project root (same level as `app/`).
+
+export async function createLeagueAction(formData: FormData) {
+  const name = String(formData.get("name") || "My Dynasty League").trim();
+  const preset = String(formData.get("preset") || "fbs");
+
+  const rawTeams = String(formData.get("teams") || "");
+  const customTeams = rawTeams
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const SMALL_TEAMS = [
+    "North Valley", "Coastal State", "Metro Tech", "Pine Ridge",
+    "Capital University", "River City", "Lakeshore", "Mountain A&M"
+  ];
+
+  let teamNames: string[] = [];
+
+  if (preset === "fbs") teamNames = FBS_TEAMS;
+  else if (preset === "small") teamNames = SMALL_TEAMS;
+  else teamNames = customTeams;
+
+  if (teamNames.length < 2) {
+    redirect(`/league/new?err=${enc("Add at least 2 teams.")}`);
+  }
+
+  const supabase = supabaseAction();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in.")}`);
+
+  const { data, error } = await supabase.rpc("create_league_with_teams", {
+    p_name: name,
+    p_team_names: teamNames
+  });
+
+  if (error) redirect(`/league/new?err=${enc(error.message)}`);
+
+  revalidatePath("/");
+  redirect(`/league/${data}`);
+}
