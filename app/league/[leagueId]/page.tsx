@@ -32,11 +32,13 @@ export default async function TeamsPage({
 
   const { data: teams, error } = await supabase
     .from("teams")
-    .select("id,name,short_name,wins,losses,prestige,rating_off,rating_def,rating_st")
+    .select("id,name,short_name,conference,wins,losses,prestige,rating_off,rating_def,rating_st")
     .eq("league_id", params.leagueId)
+    .order("conference", { ascending: true })
     .order("wins", { ascending: false })
     .order("losses", { ascending: true })
     .order("name", { ascending: true });
+
 
   if (leagueError) {
     return (
@@ -64,6 +66,7 @@ export default async function TeamsPage({
           <thead>
             <tr>
               <th>Team</th>
+              <th>Conf</th>
               <th>W-L</th>
               <th>Prestige</th>
               <th>OFF</th>
@@ -71,21 +74,26 @@ export default async function TeamsPage({
               <th>ST</th>
             </tr>
           </thead>
-          <tbody>
-            {(teams ?? []).map((t: any) => (
-              <tr key={t.id}>
-                <td>
-                  <Link href={`/league/${params.leagueId}/teams/${t.id}`}>
-                    {t.name}
-                  </Link>
-                  <div className="muted" style={{ fontSize: 12 }}>{t.short_name}</div>
-                </td>
-                <td>{t.wins}-{t.losses}</td>
-                <td>{t.prestige}</td>
-                <td>{t.rating_off}</td>
-                <td>{t.rating_def}</td>
-                <td>{t.rating_st}</td>
-              </tr>
+
+          <tr key={t.id}>
+            <td>
+              <Link href={`/league/${params.leagueId}/teams/${t.id}`}>
+                {t.name}
+              </Link>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {t.short_name}
+              </div>
+            </td>
+
+  <td>{t.conference}</td>
+
+  <td>{t.wins}-{t.losses}</td>
+  <td>{t.prestige}</td>
+  <td>{t.rating_off}</td>
+  <td>{t.rating_def}</td>
+  <td>{t.rating_st}</td>
+</tr>
+
             ))}
           </tbody>
         </table>
