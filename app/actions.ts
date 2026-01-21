@@ -7,6 +7,54 @@ import { supabaseAction } from "../lib/supabaseAction";
 function enc(s: string) {
   return encodeURIComponent(s);
 }
+/** ===== AUTH ===== */
+
+export async function signInAction(formData: FormData) {
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "").trim();
+
+  if (!email || !password) {
+    redirect(`/login?err=${enc("Email and password are required.")}`);
+  }
+
+  const supabase = supabaseAction();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    redirect(`/login?err=${enc(error.message)}`);
+  }
+
+  revalidatePath("/");
+  redirect(`/?msg=${enc("Signed in.")}`);
+}
+
+export async function signUpAction(formData: FormData) {
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "").trim();
+
+  if (!email || !password) {
+    redirect(`/login?err=${enc("Email and password are required.")}`);
+  }
+
+  const supabase = supabaseAction();
+
+  // Note: if Supabase email confirmation is ON, sign-in may require confirmation.
+  const { error } = await supabase.auth.signUp({ email, password });
+
+  if (error) {
+    redirect(`/login?err=${enc(error.message)}`);
+  }
+
+  revalidatePath("/");
+  redirect(`/login?msg=${enc("Account created. If email confirmation is enabled, check your email.")}`);
+}
+
+export async function signOutAction() {
+  const supabase = supabaseAction();
+  await supabase.auth.signOut();
+  revalidatePath("/");
+  redirect(`/?msg=${enc("Signed out.")}`);
+}
 
 /** ===== LEAGUES ===== */
 
