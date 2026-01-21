@@ -58,8 +58,11 @@ export async function signOutAction() {
 
 /** ===== LEAGUES ===== */
 
+import { FBS_GENERIC } from "../data/fbsGeneric";
+
 export async function createLeagueAction(formData: FormData) {
   const name = String(formData.get("name") || "My Dynasty League").trim();
+  const preset = String(formData.get("preset") || "fbs").trim();
 
   const rawTeams = String(formData.get("teams") || "");
   const customTeams = rawTeams
@@ -67,74 +70,46 @@ export async function createLeagueAction(formData: FormData) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Default small set so creation never fails
-  const DEFAULT_TEAMS = [
-    "Chesapeake Turtles",
-    "Miami Storm",
-    "Lynchburg Fires",
-    "Austin Rangers",
-    "Boise Peaks",
-    "Seattle Rain",
-    "Phoenix Suns",
-    "Nashville Notes"
-  ];
+  let teamsPayload: Array<{ name: string; short_name?: string; conference: string }> = [];
 
-  const teamNames = customTeams.length >= 2 ? customTeams : DEFAULT_TEAMS;
+  if (preset === "fbs") {
+    teamsPayload = FBS_GENERIC;
+  } else if (preset === "custom") {
+    teamsPayload = customTeams.map((nm) => ({
+      name: nm,
+      conference: "Independent"
+    }));
+  } else {
+    // small
+    teamsPayload = [
+      { name: "Chesapeake Turtles", conference: "Independent" },
+      { name: "Miami Storm", conference: "Independent" },
+      { name: "Lynchburg Fires", conference: "Independent" },
+      { name: "Austin Rangers", conference: "Independent" },
+      { name: "Boise Peaks", conference: "Independent" },
+      { name: "Seattle Rain", conference: "Independent" },
+      { name: "Phoenix Suns", conference: "Independent" },
+      { name: "Nashville Notes", conference: "Independent" }
+    ];
+  }
+
+  if (teamsPayload.length < 2) {
+    redirect(`/league/new?err=${enc("Add at least 2 teams.")}`);
+  }
 
   const supabase = supabaseAction();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in.")}`);
 
-  const { data, error } = await supabase.rpc("create_league_with_teams", {
+  const { data, error } = await supabase.rpc("create_league_with_structure", {
     p_name: name,
-    p_team_names: teamNames
+    p_teams: teamsPayload
   });
 
   if (error) redirect(`/league/new?err=${enc(error.message)}`);
 
   revalidatePath("/");
   redirect(`/league/${data}`);
-}
-
-export async function joinLeagueAction(formData: FormData) {
-  const code = String(formData.get("invite") || "").trim();
-  if (!code) redirect(`/league/join?err=${enc("Invite code required.")}`);
-
-  const supabase = supabaseAction();
-  const { data, error } = await supabase.rpc("join_league_by_code", {
-    p_invite_code: code
-  });
-
-  if (error) redirect(`/league/join?err=${enc(error.message)}`);
-
-  revalidatePath("/");
-  redirect(`/league/${data}`);
-}
-
-export async function advanceWeekAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
-
-  const supabase = supabaseAction();
-  const { error } = await supabase.rpc("advance_week", { p_league_id: leagueId });
-
-  if (error) redirect(`/league/${leagueId}?err=${enc(error.message)}`);
-
-  revalidatePath(`/league/${leagueId}`);
-  redirect(`/league/${leagueId}?msg=${enc("Advanced week.")}`);
-}
-
-export async function deleteLeagueAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
-
-  const supabase = supabaseAction();
-  const { error } = await supabase.rpc("delete_league", { p_league_id: leagueId });
-
-  if (error) redirect(`/?err=${enc(error.message)}`);
-
-  revalidatePath("/");
-  redirect(`/?msg=${enc("League deleted.")}`);
 }
 
 /** ===== TEAMS ===== */
