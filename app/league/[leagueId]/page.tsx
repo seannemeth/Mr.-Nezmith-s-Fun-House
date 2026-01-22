@@ -104,6 +104,7 @@ export default async function LeagueDashboard({
         <div className="h2">Next steps</div>
         <ul className="muted">
           <li><Link href={`/league/${params.leagueId}/settings`} style={{ color: "var(--accent)" }}>Select your team and role</Link></li>
+          <Link className="btn secondary" href={`/league/${params.leagueId}/team-role`}> Team & Role</Link>
           <li>Recruiting / Portal / NIL pages are wired to the database and ready for gameplay rules.</li>
           <li>News and storylines can be added via a “news” table + generator function later.</li>
         </ul>
