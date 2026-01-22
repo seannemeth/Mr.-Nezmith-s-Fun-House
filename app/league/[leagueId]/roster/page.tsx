@@ -100,7 +100,7 @@ export default async function RosterPage({
               </tr>
             </thead>
             <tbody>
-              {(roster || []).map((p: any) => (
+              {(players || []).map((p: any) => (
                 <tr key={p.id}>
                   <td>{p.position}</td>
                   <td>{p.name_first} {p.name_last}</td>
