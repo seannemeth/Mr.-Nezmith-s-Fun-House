@@ -1,0 +1,78 @@
+:root{
+  --bg:#0b0f14;
+  --card:#111827;
+  --muted:#9ca3af;
+  --text:#e5e7eb;
+  --border:#1f2937;
+  --accent:#60a5fa;
+  --danger:#f87171;
+  --ok:#34d399;
+  --warn:#fbbf24;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+}
+a{color:inherit;text-decoration:none}
+.container{max-width:1100px;margin:0 auto;padding:18px}
+.topbar{
+  position:sticky;top:0;z-index:10;
+  background:rgba(11,15,20,.86);
+  backdrop-filter: blur(8px);
+  border-bottom:1px solid var(--border);
+}
+.nav{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{
+  font-weight:700;letter-spacing:.3px;
+  padding:10px 12px;border:1px solid var(--border);border-radius:12px;
+  background:rgba(17,24,39,.6);
+}
+.nav a{padding:10px 12px;border-radius:12px;border:1px solid transparent;color:var(--muted)}
+.nav a:hover{border-color:var(--border);color:var(--text)}
+.right{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.card{background:rgba(17,24,39,.72);border:1px solid var(--border);border-radius:16px;padding:16px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.col12{grid-column:span 12}
+.col8{grid-column:span 8}
+.col6{grid-column:span 6}
+.col4{grid-column:span 4}
+.col3{grid-column:span 3}
+@media (max-width: 900px){.col8,.col6,.col4,.col3{grid-column:span 12}}
+.h1{font-size:24px;font-weight:800;margin:0 0 8px}
+.h2{font-size:18px;font-weight:700;margin:0 0 10px}
+.muted{color:var(--muted)}
+.kpi{display:flex;gap:10px;flex-wrap:wrap}
+.badge{padding:4px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:12px}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:10px 12px;border-radius:12px;border:1px solid var(--border);
+  background:rgba(17,24,39,.55);
+}
+button.btn{cursor:pointer;color:var(--text)}
+.btn:hover{border-color:#334155}
+.btn.primary{border-color:rgba(96,165,250,.45);background:rgba(96,165,250,.15)}
+.btn.danger{border-color:rgba(248,113,113,.5);background:rgba(248,113,113,.12)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.input, select, textarea{
+  width:100%;
+  padding:10px 12px;border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(11,15,20,.65);
+  color:var(--text);
+  outline:none;
+}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.table{width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden;border:1px solid var(--border)}
+.table th,.table td{padding:10px 10px;border-bottom:1px solid var(--border);text-align:left;font-size:14px}
+.table th{color:var(--muted);font-weight:600;background:rgba(11,15,20,.35)}
+.table tr:hover td{background:rgba(255,255,255,.03)}
+.hr{height:1px;background:var(--border);margin:12px 0}
+.small{font-size:12px;color:var(--muted)}
+.err{border:1px solid rgba(248,113,113,.5);color:#fecaca;background:rgba(248,113,113,.1);padding:10px 12px;border-radius:12px}
+.ok{border:1px solid rgba(52,211,153,.45);color:#bbf7d0;background:rgba(52,211,153,.10);padding:10px 12px;border-radius:12px}

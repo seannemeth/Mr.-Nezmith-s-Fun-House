@@ -1,126 +1,79 @@
-
 import { supabaseServer } from "../../../../lib/supabaseServer";
-import { setTeamRoleAction } from "../../../actions";
+import { selectRoleAction } from "../../../actions";
 
-const ROLE_OPTIONS = [
-  { value: "ad", label: "Athletic Director (AD)" },
-  { value: "hc", label: "Head Coach (HC)" },
-  { value: "oc", label: "Offensive Coordinator (OC)" },
-  { value: "dc", label: "Defensive Coordinator (DC)" },
-  { value: "member", label: "Member (spectator)" }
-];
+const ROLES = ["AD","Head Coach","Offensive Coordinator","Defensive Coordinator","Recruiting Director"];
 
-export default async function SettingsPage({
+export default async function LeagueSettingsPage({
   params,
-  searchParams
+  searchParams,
 }: {
   params: { leagueId: string };
-  searchParams?: { msg?: string; err?: string };
+  searchParams?: { err?: string; ok?: string };
 }) {
-  const supabase = supabaseServer();
-
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
+  const ok = searchParams?.ok ? decodeURIComponent(searchParams.ok) : "";
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return (
-      <div className="card">
-        <div className="h1">Settings</div>
-        <p className="muted">Please sign in.</p>
-      </div>
-    );
-  }
+  const sb = supabaseServer();
+  const { data: meRes } = await sb.auth.getUser();
+  const user = meRes.user;
 
-  const { data: league } = await supabase
-    .from("leagues")
-    .select("id,name,commissioner_id,invite_code")
-    .eq("id", params.leagueId)
-    .single();
-
-  const { data: myMembership } = await supabase
+  const { data: membership } = await sb
     .from("memberships")
-    .select("role, team_id")
+    .select("id,team_id,role")
     .eq("league_id", params.leagueId)
-    .eq("user_id", userData.user.id)
-    .single();
+    .eq("user_id", user?.id || "")
+    .maybeSingle();
 
-  const { data: teams } = await supabase
+  const { data: teams } = await sb
     .from("teams")
-    .select("id,name,conference")
+    .select("id,name,conference_name")
     .eq("league_id", params.leagueId)
-    .order("conference", { ascending: true })
+    .order("conference_name", { ascending: true })
     .order("name", { ascending: true });
-
-  // Which teams are already taken?
-  const { data: taken } = await supabase
-    .from("memberships")
-    .select("team_id")
-    .eq("league_id", params.leagueId);
-
-  const takenSet = new Set((taken ?? []).map((r: any) => r.team_id).filter(Boolean));
-
-  const isCommissioner = league?.commissioner_id === userData.user.id;
 
   return (
     <div className="grid">
       <div className="card col12">
-        <div className="h1">Settings — {league?.name}</div>
-        <p className="muted">Invite code: <b>{league?.invite_code}</b></p>
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
+        <div className="h2">Settings</div>
+        <p className="muted">Pick your team and role. This drives permissions and gameplay.</p>
+        {err ? <div className="err">{err}</div> : null}
+        {ok ? <div className="ok">{ok}</div> : null}
       </div>
 
       <div className="card col6">
-        <div className="h2">Pick Team & Role</div>
-        <p className="muted">
-          Choose a team to control. A team can be claimed by only one user. Roles affect your permissions later (recruiting, NIL, coaching upgrades).
-        </p>
-
-        <form action={setTeamRoleAction}>
+        <div className="h2">Your role</div>
+        <form action={selectRoleAction}>
           <input type="hidden" name="leagueId" value={params.leagueId} />
 
-          <label className="muted">Role</label>
-          <select className="input" name="role" defaultValue={myMembership?.role ?? "hc"}>
-            {ROLE_OPTIONS.map(r => (
-              <option key={r.value} value={r.value}>{r.label}</option>
+          <label className="small">Team</label>
+          <select className="input" name="teamId" defaultValue={membership?.team_id || ""} required>
+            <option value="" disabled>Select a team…</option>
+            {(teams || []).map((t: any) => (
+              <option key={t.id} value={t.id}>{t.conference_name} — {t.name}</option>
             ))}
           </select>
 
           <div style={{ height: 10 }} />
 
-          <label className="muted">Team</label>
-          <select className="input" name="teamId" defaultValue={myMembership?.team_id ?? ""}>
-            <option value="">No team (spectator)</option>
-            {(teams ?? []).map((t: any) => {
-              const takenByOther = takenSet.has(t.id) && t.id !== myMembership?.team_id;
-              return (
-                <option key={t.id} value={t.id} disabled={takenByOther}>
-                  {t.conference} — {t.name}{takenByOther ? " (taken)" : ""}
-                </option>
-              );
-            })}
+          <label className="small">Role</label>
+          <select className="input" name="role" defaultValue={membership?.role || "Head Coach"}>
+            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
 
           <div style={{ height: 12 }} />
-          <button className="btn" type="submit">Save</button>
+          <button className="btn primary" type="submit">Save</button>
         </form>
       </div>
 
       <div className="card col6">
-        <div className="h2">League Controls</div>
-        <p className="muted">
-          Commissioner-only actions will expand here (invite reset, rules, schedule options).
-        </p>
-        {isCommissioner ? (
-          <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
-            <li>Advance Week from Dashboard</li>
-            <li>Initialize Recruiting/Portal/NIL from Dashboard</li>
-            <li>Delete league from Home</li>
-          </ul>
-        ) : (
-          <p className="muted">You are not the commissioner for this league.</p>
-        )}
+        <div className="h2">Roadmap (next)</div>
+        <ul className="muted">
+          <li>Depth chart + redshirt decisions</li>
+          <li>Recruiting: offers, visits, scouting accuracy</li>
+          <li>Transfer Portal: bids, promises, tampering risk</li>
+          <li>NIL: deals, collectives, budget tradeoffs</li>
+          <li>Coach carousel: contract, buyout, hiring pools</li>
+        </ul>
       </div>
     </div>
   );

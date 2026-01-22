@@ -1,17 +1,21 @@
+# CFB Text Dynasty (MVP)
 
-# CFB Dynasty (Text-Based)
+Deploy-ready Next.js 14 (App Router) + Supabase project for a text-based college football dynasty.
 
-A minimal, text-first college-football dynasty manager inspired by modern sports sims.
-
-## Deploy
+## Setup
 1. Create a Supabase project.
-2. Supabase SQL Editor: run `supabase/schema.sql`.
-3. Vercel env vars:
-   - NEXT_PUBLIC_SUPABASE_URL
-   - NEXT_PUBLIC_SUPABASE_ANON_KEY
-4. Deploy to Vercel.
+2. In Supabase SQL Editor, run: `supabase/schema.sql`
+3. Enable Email/Password auth. For easiest testing, disable email confirmation (or confirm emails).
+4. Set env vars in Vercel (or local):
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+## Local
+```bash
+npm install
+npm run dev
+```
 
 ## Notes
-- All writes happen via Supabase RPC functions (security definer) to avoid RLS pain.
-- Team/role selection is in League -> Settings.
-- Commissioner initializes Recruiting/Portal/NIL from the League dashboard (button).
+- Uses generic, location-based teams (no real school branding).
+- MVP includes league create/join/delete, teams, schedule, recruiting board, portal/NIL/coaches scaffolding.

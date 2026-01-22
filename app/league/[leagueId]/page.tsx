@@ -1,154 +1,111 @@
-
 import Link from "next/link";
 import { supabaseServer } from "../../../lib/supabaseServer";
-import { advanceWeekAction, initSeasonProgramsAction } from "../../actions";
+import { advanceWeekAction } from "../../actions";
 
-export default async function LeaguePage({
+export default async function LeagueDashboard({
   params,
-  searchParams
+  searchParams,
 }: {
   params: { leagueId: string };
-  searchParams?: { msg?: string; err?: string };
+  searchParams?: { err?: string; ok?: string };
 }) {
-  const supabase = supabaseServer();
-
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
+  const ok = searchParams?.ok ? decodeURIComponent(searchParams.ok) : "";
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return (
-      <div className="card">
-        <div className="h1">League</div>
-        <p className="muted">Please sign in.</p>
-        <Link className="btn" href="/login">Sign in</Link>
-      </div>
-    );
-  }
+  const sb = supabaseServer();
 
-  const { data: league, error: leagueError } = await supabase
-    .from("leagues")
-    .select("id,name,commissioner_id,current_season,current_week,invite_code")
-    .eq("id", params.leagueId)
-    .single();
-
-  if (leagueError || !league) {
-    return (
-      <div className="card">
-        <div className="h1">League</div>
-        <p className="error">{leagueError?.message ?? "League not found."}</p>
-        <Link className="btn secondary" href="/">Home</Link>
-      </div>
-    );
-  }
-
-  const isCommissioner = league.commissioner_id === userData.user.id;
-
-  const { data: games } = await supabase
-    .from("games")
-    .select("id,week,season,status,home_score,away_score,home_team_id,away_team_id")
-    .eq("league_id", params.leagueId)
-    .eq("season", league.current_season)
-    .eq("week", league.current_week)
-    .order("created_at", { ascending: true });
-
-  const { data: weekTeams } = await supabase
+  const { data: standings } = await sb
     .from("teams")
-    .select("id,name")
-    .eq("league_id", params.leagueId);
-
-  const teamNameById = new Map<string, string>(
-    (weekTeams ?? []).map((t: any) => [t.id, t.name])
-  );
-
-  // Read my membership (team/role selection)
-  const { data: myMembership } = await supabase
-    .from("memberships")
-    .select("role, team_id")
+    .select("id,name,wins,losses,prestige,conference_name")
     .eq("league_id", params.leagueId)
-    .eq("user_id", userData.user.id)
-    .single();
+    .order("wins", { ascending: false })
+    .order("prestige", { ascending: false })
+    .limit(15);
+
+  const { data: games } = await sb
+    .from("games")
+    .select("id,week,season,status,home_score,away_score,home_team:home_team_id(name),away_team:away_team_id(name)")
+    .eq("league_id", params.leagueId)
+    .order("season", { ascending: false })
+    .order("week", { ascending: false })
+    .limit(12);
 
   return (
     <div className="grid">
       <div className="card col12">
+        {err ? <div className="err">{err}</div> : null}
+        {ok ? <div className="ok">{ok}</div> : null}
+
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
-            <div className="h1">{league.name}</div>
-            <p className="muted">
-              Season {league.current_season} • Week {league.current_week} • Invite <b>{league.invite_code}</b>
-            </p>
-            <p className="muted">
-              Your role: <b>{myMembership?.role ?? "member"}</b>{" "}
-              {myMembership?.team_id ? "(team selected)" : "(no team yet)"}
-            </p>
-            {msg ? <p className="success">{msg}</p> : null}
-            {err ? <p className="error">{err}</p> : null}
+            <div className="h2">Commissioner tools</div>
+            <p className="muted">Advance the week to simulate games and generate the next slate.</p>
           </div>
 
-          <div className="row">
-            <Link className="btn secondary" href={`/league/${params.leagueId}/settings`}>Settings</Link>
-            <Link className="btn secondary" href={`/league/${params.leagueId}/teams`}>Teams</Link>
-            <Link className="btn secondary" href={`/league/${params.leagueId}/recruiting`}>Recruiting</Link>
-          </div>
+          <form action={advanceWeekAction}>
+            <input type="hidden" name="leagueId" value={params.leagueId} />
+            <button className="btn primary" type="submit">Advance Week</button>
+          </form>
         </div>
       </div>
 
       <div className="card col6">
-        <div className="h2">This Week</div>
-        <p className="muted">Week {league.current_week} matchups.</p>
-
+        <div className="h2">Top Standings</div>
         <table className="table">
           <thead>
-            <tr><th>Matchup</th><th>Status</th></tr>
+            <tr><th>Team</th><th>W</th><th>L</th><th>Prestige</th></tr>
           </thead>
           <tbody>
-            {(games ?? []).map((g: any) => {
-              const home = teamNameById.get(g.home_team_id) ?? "Home";
-              const away = teamNameById.get(g.away_team_id) ?? "Away";
-              const line =
-                g.status === "final"
-                  ? `${away} ${g.away_score} @ ${home} ${g.home_score}`
-                  : `${away} @ ${home}`;
-              return (
-                <tr key={g.id}>
-                  <td>{line}</td>
-                  <td>{g.status}</td>
-                </tr>
-              );
-            })}
-            {(!games || games.length === 0) ? (
-              <tr><td className="muted" colSpan={2}>No games scheduled.</td></tr>
+            {(standings || []).map((t: any) => (
+              <tr key={t.id}>
+                <td>
+                  <Link href={`/league/${params.leagueId}/teams#${t.id}`} style={{ color: "var(--accent)" }}>
+                    {t.name}
+                  </Link>
+                  <div className="small">{t.conference_name}</div>
+                </td>
+                <td>{t.wins}</td>
+                <td>{t.losses}</td>
+                <td>{t.prestige}</td>
+              </tr>
+            ))}
+            {(!standings || standings.length === 0) ? (
+              <tr><td colSpan={4} className="muted">No teams found.</td></tr>
             ) : null}
           </tbody>
         </table>
-
-        {isCommissioner ? (
-          <div className="row" style={{ marginTop: 12 }}>
-            <form action={advanceWeekAction}>
-              <input type="hidden" name="leagueId" value={params.leagueId} />
-              <button className="btn" type="submit">Advance Week</button>
-            </form>
-
-            <form action={initSeasonProgramsAction}>
-              <input type="hidden" name="leagueId" value={params.leagueId} />
-              <button className="btn secondary" type="submit">Init Recruiting/Portal/NIL</button>
-            </form>
-          </div>
-        ) : (
-          <p className="muted" style={{ marginTop: 12 }}>
-            Only the commissioner can advance the week or initialize offseason programs.
-          </p>
-        )}
       </div>
 
       <div className="card col6">
-        <div className="h2">Next Steps</div>
-        <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
-          <li>Pick a team and role in <b>Settings</b>.</li>
-          <li>Recruiting: allocate weekly points to prospects and NIL deals.</li>
-          <li>Portal: bid points for transfer targets.</li>
-          <li>Coaches: spend skill points to improve recruiting and sim output.</li>
+        <div className="h2">Recent Games</div>
+        <table className="table">
+          <thead>
+            <tr><th>Week</th><th>Matchup</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {(games || []).map((g: any) => (
+              <tr key={g.id}>
+                <td>S{g.season} W{g.week}</td>
+                <td>
+                  {g.away_team?.name} @ {g.home_team?.name}
+                  {g.status === "final" ? <div className="small">Final: {g.away_score}–{g.home_score}</div> : <div className="small">Scheduled</div>}
+                </td>
+                <td><span className="badge">{g.status}</span></td>
+              </tr>
+            ))}
+            {(!games || games.length === 0) ? (
+              <tr><td colSpan={3} className="muted">No games yet.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card col12">
+        <div className="h2">Next steps</div>
+        <ul className="muted">
+          <li><Link href={`/league/${params.leagueId}/settings`} style={{ color: "var(--accent)" }}>Select your team and role</Link></li>
+          <li>Recruiting / Portal / NIL pages are wired to the database and ready for gameplay rules.</li>
+          <li>News and storylines can be added via a “news” table + generator function later.</li>
         </ul>
       </div>
     </div>

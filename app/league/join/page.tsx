@@ -1,24 +1,28 @@
-
+import Link from "next/link";
 import { joinLeagueAction } from "../../actions";
 
-export default function JoinLeaguePage({ searchParams }: { searchParams?: { err?: string; msg?: string } }) {
+export default function JoinLeaguePage({ searchParams }: { searchParams?: { err?: string; ok?: string } }) {
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
+  const ok = searchParams?.ok ? decodeURIComponent(searchParams.ok) : "";
 
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Join League</div>
         <p className="muted">Enter the invite code from the commissioner.</p>
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
+        {err ? <div className="err">{err}</div> : null}
+        {ok ? <div className="ok">{ok}</div> : null}
+      </div>
 
+      <div className="card col6">
         <form action={joinLeagueAction}>
-          <label className="muted">Invite code</label>
-          <input className="input" name="invite" placeholder="AB12CD34" />
+          <label className="small">Invite code</label>
+          <input className="input" name="inviteCode" placeholder="AB12CD34" required />
           <div style={{ height: 12 }} />
-          <button className="btn" type="submit">Join</button>
+          <button className="btn primary" type="submit">Join</button>
         </form>
+        <div className="hr" />
+        <Link className="btn" href="/">Back</Link>
       </div>
     </div>
   );

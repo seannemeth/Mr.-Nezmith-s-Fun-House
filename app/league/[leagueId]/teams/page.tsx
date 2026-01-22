@@ -1,77 +1,41 @@
-
-import Link from "next/link";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
-export default async function TeamsPage({
-  params,
-  searchParams
-}: {
-  params: { leagueId: string };
-  searchParams?: { err?: string; msg?: string };
-}) {
-  const supabase = supabaseServer();
-
-  const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
-
-  const { data: league } = await supabase
-    .from("leagues")
-    .select("id,name,current_season,current_week")
-    .eq("id", params.leagueId)
-    .single();
-
-  const { data: teams, error } = await supabase
+export default async function TeamsPage({ params }: { params: { leagueId: string } }) {
+  const sb = supabaseServer();
+  const { data: teams, error } = await sb
     .from("teams")
-    .select("id,name,short_name,conference,wins,losses,prestige,rating_off,rating_def,rating_st")
+    .select("id,name,conference_name,prestige,rating_off,rating_def,rating_st,wins,losses")
     .eq("league_id", params.leagueId)
-    .order("conference", { ascending: true })
-    .order("wins", { ascending: false })
-    .order("losses", { ascending: true })
+    .order("conference_name", { ascending: true })
     .order("name", { ascending: true });
 
-  return (
-    <div className="grid">
-      <div className="card col12">
-        <div className="h1">Teams — {league?.name}</div>
-        <p className="muted">
-          Season {league?.current_season}, Week {league?.current_week}. Click a team to view/edit ratings.
-        </p>
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
-        {error ? <p className="error">{error.message}</p> : null}
-      </div>
+  if (error) {
+    return <div className="card"><div className="h2">Teams</div><div className="err">{error.message}</div></div>;
+  }
 
-      <div className="card col12">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Team</th>
-              <th>Conf</th>
-              <th>W-L</th>
-              <th>Prestige</th>
-              <th>OFF</th>
-              <th>DEF</th>
-              <th>ST</th>
+  return (
+    <div className="card">
+      <div className="h2">Teams</div>
+      <p className="muted">Conference list with baseline ratings (editing comes next).</p>
+      <table className="table">
+        <thead>
+          <tr><th>Conference</th><th>Team</th><th>W-L</th><th>Prestige</th><th>OFF</th><th>DEF</th><th>ST</th></tr>
+        </thead>
+        <tbody>
+          {(teams || []).map((t: any) => (
+            <tr key={t.id} id={t.id}>
+              <td>{t.conference_name}</td>
+              <td>{t.name}</td>
+              <td>{t.wins}-{t.losses}</td>
+              <td>{t.prestige}</td>
+              <td>{t.rating_off}</td>
+              <td>{t.rating_def}</td>
+              <td>{t.rating_st}</td>
             </tr>
-          </thead>
-          <tbody>
-            {(teams ?? []).map((t: any) => (
-              <tr key={t.id}>
-                <td>
-                  <Link href={`/league/${params.leagueId}/teams/${t.id}`}>{t.name}</Link>
-                  <div className="muted" style={{ fontSize: 12 }}>{t.short_name}</div>
-                </td>
-                <td>{t.conference}</td>
-                <td>{t.wins}-{t.losses}</td>
-                <td>{t.prestige}</td>
-                <td>{t.rating_off}</td>
-                <td>{t.rating_def}</td>
-                <td>{t.rating_st}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+          {(!teams || teams.length === 0) ? <tr><td colSpan={7} className="muted">No teams found.</td></tr> : null}
+        </tbody>
+      </table>
     </div>
   );
 }

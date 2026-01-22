@@ -1,75 +1,102 @@
-
 import Link from "next/link";
 import { supabaseServer } from "../lib/supabaseServer";
 import { deleteLeagueAction } from "./actions";
 
-export default async function HomePage({
-  searchParams
-}: {
-  searchParams?: { msg?: string; err?: string };
-}) {
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
+export default async function HomePage({ searchParams }: { searchParams?: { err?: string; ok?: string } }) {
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
+  const ok = searchParams?.ok ? decodeURIComponent(searchParams.ok) : "";
 
-  if (!userData.user) {
+  const sb = supabaseServer();
+  const { data: userRes } = await sb.auth.getUser();
+  const user = userRes.user;
+
+  if (!user) {
     return (
-      <div className="card">
-        <div className="h1">CFB Dynasty</div>
-        <p className="muted">Sign in to create or join an online league.</p>
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
-        <Link className="btn" href="/login">Sign in</Link>
+      <div className="grid">
+        <div className="card col12">
+          <div className="h1">CFB Text Dynasty</div>
+          <p className="muted">A clean, replayable, text-first college football dynasty you can play online with friends.</p>
+          <Link className="btn primary" href="/login">Sign in to start</Link>
+        </div>
+        <div className="card col12">
+          <div className="h2">What’s included in this build</div>
+          <ul className="muted">
+            <li>Auth (Supabase)</li>
+            <li>Create / Join / Delete leagues (commissioner-only delete)</li>
+            <li>Generic FBS-style teams + conferences</li>
+            <li>Schedule + Advance Week simulation</li>
+            <li>85-man rosters per team</li>
+            <li>Recruiting class (1000+ recruits)</li>
+          </ul>
+        </div>
       </div>
     );
   }
 
-  const { data: memberships, error } = await supabase
-    .from("memberships")
-    .select("role, team_id, league_id, leagues(name, invite_code, current_season, current_week)")
+  const { data: leagues, error } = await sb
+    .from("leagues")
+    .select("id,name,invite_code,current_season,current_week,commissioner_id")
     .order("created_at", { ascending: false });
+
+  if (error) {
+    return (
+      <div className="card">
+        <div className="h1">Leagues</div>
+        <div className="err">{error.message}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Your Leagues</div>
-        <p className="muted">Create a league, invite friends, pick a team & role, and advance the season.</p>
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
-        {error ? <p className="error">{error.message}</p> : null}
+        <p className="muted">Create a dynasty, invite friends, pick roles, and advance seasons for decades.</p>
+        {err ? <div className="err">{err}</div> : null}
+        {ok ? <div className="ok">{ok}</div> : null}
+        <div className="row" style={{ marginTop: 10 }}>
+          <Link className="btn primary" href="/league/new">Create League</Link>
+          <Link className="btn" href="/league/join">Join by Code</Link>
+        </div>
       </div>
 
-      {(memberships ?? []).map((m: any) => {
-        const league = m.leagues;
-        return (
-          <div key={m.league_id} className="card col6">
-            <div className="h2">{league?.name ?? "League"}</div>
-            <div className="muted">Season {league?.current_season ?? "—"}, Week {league?.current_week ?? "—"}</div>
-            <div className="muted">Role: {m.role}</div>
-            <div className="muted">Invite: <b>{league?.invite_code ?? "—"}</b></div>
-
-            <div className="row" style={{ marginTop: 12 }}>
-              <Link className="btn" href={`/league/${m.league_id}`}>Open</Link>
-
-              {m.role === "commissioner" ? (
-                <form action={deleteLeagueAction}>
-                  <input type="hidden" name="leagueId" value={m.league_id} />
-                  <button className="btn danger" type="submit">Delete</button>
-                </form>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-
-      <div className="card col6">
-        <div className="h2">Start something new</div>
-        <div className="row" style={{ marginTop: 12 }}>
-          <Link className="btn" href="/league/new">Create League</Link>
-          <Link className="btn secondary" href="/league/join">Join League</Link>
-        </div>
+      <div className="card col12">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>League</th>
+              <th>Invite</th>
+              <th>Season</th>
+              <th>Week</th>
+              <th style={{ width: 160 }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(leagues || []).map((l: any) => (
+              <tr key={l.id}>
+                <td>
+                  <Link href={`/league/${l.id}`} style={{ color: "var(--accent)" }}>{l.name}</Link>
+                  <div className="small">ID: {l.id}</div>
+                </td>
+                <td><span className="badge">{l.invite_code}</span></td>
+                <td>{l.current_season}</td>
+                <td>{l.current_week}</td>
+                <td>
+                  <div className="row">
+                    <Link className="btn" href={`/league/${l.id}`}>Open</Link>
+                    <form action={deleteLeagueAction}>
+                      <input type="hidden" name="leagueId" value={l.id} />
+                      <button className="btn danger" type="submit" title="Commissioner only">Delete</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {(!leagues || leagues.length === 0) ? (
+              <tr><td colSpan={5} className="muted">No leagues yet. Create one.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </div>
   );

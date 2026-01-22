@@ -6,7 +6,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Chesapeake"
   },
   {
-    "name": "Miami Storm",
+    "name": "Miami Squalls",
     "conference": "Coastal"
   },
   {
@@ -14,7 +14,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Atlantic"
   },
   {
-    "name": "Austin Rangers",
+    "name": "Austin Wranglers",
     "conference": "South"
   },
   {
@@ -26,11 +26,11 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Pacific"
   },
   {
-    "name": "Phoenix Suns",
+    "name": "Phoenix Sunbirds",
     "conference": "Desert"
   },
   {
-    "name": "Nashville Notes",
+    "name": "Nashville Cadence",
     "conference": "South"
   },
   {
@@ -42,7 +42,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "South"
   },
   {
-    "name": "Raleigh Storm",
+    "name": "Raleigh Squalls",
     "conference": "Mountain"
   },
   {
@@ -166,7 +166,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Pacific"
   },
   {
-    "name": "San Jose Notes",
+    "name": "San Jose Cadence",
     "conference": "Chesapeake"
   },
   {
@@ -178,11 +178,11 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Coastal"
   },
   {
-    "name": "Las Vegas Suns",
+    "name": "Las Vegas Sunbirds",
     "conference": "Frontier"
   },
   {
-    "name": "Las Vegas Notes",
+    "name": "Las Vegas Cadence",
     "conference": "Plains"
   },
   {
@@ -206,7 +206,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Desert"
   },
   {
-    "name": "Dallas Rangers",
+    "name": "Dallas Wranglers",
     "conference": "Mountain"
   },
   {
@@ -226,7 +226,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Metro"
   },
   {
-    "name": "Baton Rouge Suns",
+    "name": "Baton Rouge Sunbirds",
     "conference": "Frontier"
   },
   {
@@ -250,7 +250,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Frontier"
   },
   {
-    "name": "Columbus Notes",
+    "name": "Columbus Cadence",
     "conference": "Mountain"
   },
   {
@@ -262,7 +262,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Great Lakes"
   },
   {
-    "name": "Akron Storm",
+    "name": "Akron Squalls",
     "conference": "Frontier"
   },
   {
@@ -366,7 +366,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Plains"
   },
   {
-    "name": "St. Louis Notes",
+    "name": "St. Louis Cadence",
     "conference": "Atlantic"
   },
   {
@@ -374,11 +374,11 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Mountain"
   },
   {
-    "name": "Kansas City Rangers",
+    "name": "Kansas City Wranglers",
     "conference": "Chesapeake"
   },
   {
-    "name": "Omaha Notes",
+    "name": "Omaha Cadence",
     "conference": "Pacific"
   },
   {
@@ -394,7 +394,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Atlantic"
   },
   {
-    "name": "Milwaukee Rangers",
+    "name": "Milwaukee Wranglers",
     "conference": "Great Lakes"
   },
   {
@@ -402,7 +402,7 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Chesapeake"
   },
   {
-    "name": "New Orleans Notes",
+    "name": "New Orleans Cadence",
     "conference": "Atlantic"
   },
   {
@@ -422,11 +422,11 @@ export const FBS_GENERIC: SeedTeam[] = [
     "conference": "Atlantic"
   },
   {
-    "name": "Little Rock Rangers",
+    "name": "Little Rock Wranglers",
     "conference": "Gulf"
   },
   {
-    "name": "Fresno Suns",
+    "name": "Fresno Sunbirds",
     "conference": "Frontier"
   },
   {
