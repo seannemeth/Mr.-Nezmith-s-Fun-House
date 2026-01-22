@@ -109,3 +109,45 @@ export async function selectRoleAction(formData: FormData) {
   if (error) redirect(`/league/${leagueId}/settings?err=${enc(error.message)}`);
   redirect(`/league/${leagueId}/settings?ok=${enc("Role saved.")}`);
 }
+
+// ===== Teams: update basic team fields (commissioner only via RLS/ownership checks)
+export async function updateTeamAction(formData: FormData) {
+  "use server";
+
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+
+  const name = String(formData.get("name") || "").trim();
+  const short_name = String(formData.get("short_name") || "").trim();
+  const prestige = Number(formData.get("prestige") || 50);
+  const rating_off = Number(formData.get("rating_off") || 50);
+  const rating_def = Number(formData.get("rating_def") || 50);
+  const rating_st = Number(formData.get("rating_st") || 50);
+
+  if (!leagueId || !teamId) {
+    throw new Error("Missing leagueId or teamId");
+  }
+  if (!name || !short_name) {
+    throw new Error("Name and short name are required");
+  }
+
+  // Lazy import to avoid edge bundling issues
+  const { supabaseServer } = await import("../lib/supabaseServer");
+
+  const supabase = supabaseServer();
+
+  const { error } = await supabase
+    .from("teams")
+    .update({
+      name,
+      short_name,
+      prestige,
+      rating_off,
+      rating_def,
+      rating_st
+    })
+    .eq("id", teamId)
+    .eq("league_id", leagueId);
+
+  if (error) throw error;
+}
