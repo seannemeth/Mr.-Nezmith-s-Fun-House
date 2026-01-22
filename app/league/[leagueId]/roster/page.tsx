@@ -44,15 +44,15 @@ export default async function RosterPage({
     .order("conference", { ascending: true })
     .order("name", { ascending: true });
 
-  const { data: roster } = teamId
-    ? await supabase
-        .from("players")
-        .select("id,name_first,name_last,position,archetype,quality,stars,class_year,height_in,weight_lb,state")
-        .eq("league_id", params.leagueId)
-        .eq("team_id", teamId)
-        .order("position", { ascending: true })
-        .order("quality", { ascending: false })
-    : { data: [], error: null };
+  const { data: players } = teamId
+  ? await supabase
+      .from("players")
+      .select("*")
+      .eq("team_id", teamId)
+      .order("position", { ascending: true })
+      .order("quality", { ascending: false })
+  : { data: [] as any[] };
+
 
   const selectedTeam = teamId ? (teams || []).find((t: any) => t.id === teamId) : null;
 
