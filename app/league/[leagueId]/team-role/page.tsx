@@ -13,19 +13,28 @@ const ROLES = [
   { id: "dc", label: "DC (Defensive Coordinator)" }
 ] as const;
 
+type RoleId = (typeof ROLES)[number]["id"];
+
 async function setTeamRoleAction(formData: FormData) {
   "use server";
 
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
+
+  // STEP 1: normalize role to a safe value like "hc"
   const role = String(formData.get("role") || "")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z]/g, "");
+    .replace(/[^a-z]/g, "") as RoleId | string;
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(`/league/${leagueId}/team-role?err=${enc("Pick a team.")}`);
   if (!role) redirect(`/league/${leagueId}/team-role?err=${enc("Pick a role.")}`);
+
+  // optional: hard-gate unknown roles before RPC
+  if (!["ad", "hc", "oc", "dc"].includes(role)) {
+    redirect(`/league/${leagueId}/team-role?err=${enc("Invalid role (client).")}`);
+  }
 
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
@@ -42,13 +51,12 @@ async function setTeamRoleAction(formData: FormData) {
   redirect(`/league/${leagueId}?msg=${enc("Team & role saved.")}`);
 }
 
-export default async function TeamRolePage({
-  params,
-  searchParams
-}: {
-  params: { leagueId:  };
+export default async function TeamRolePage(props: {
+  params: { leagueId: string };
   searchParams?: { err?: string; msg?: string };
 }) {
+  const { params, searchParams } = props;
+
   const supabase = supabaseServer();
 
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
@@ -71,6 +79,9 @@ export default async function TeamRolePage({
         <div className="h1">Team & Role</div>
         <p className="error">Could not load league.</p>
         <p className="muted">{leagueErr?.message}</p>
+        <Link className="btn secondary" href="/">
+          Back
+        </Link>
       </div>
     );
   }
@@ -82,9 +93,11 @@ export default async function TeamRolePage({
     .eq("user_id", userData.user.id)
     .maybeSingle();
 
+  // NOTE: your schema shows teams has conference + conference_name (sometimes missing in old leagues)
+  // So we order by what exists, but do not assume either exists.
   const { data: teams, error: teamsErr } = await supabase
     .from("teams")
-    .select("id,name,conference_name,conference")
+    .select("id,name,conference,conference_name")
     .eq("league_id", params.leagueId)
     .order("conference_name", { ascending: true })
     .order("conference", { ascending: true })
@@ -96,6 +109,9 @@ export default async function TeamRolePage({
         <div className="h1">Team & Role — {league.name}</div>
         <p className="error">Could not load teams.</p>
         <p className="muted">{teamsErr.message}</p>
+        <Link className="btn secondary" href={`/league/${params.leagueId}`}>
+          Back
+        </Link>
       </div>
     );
   }
@@ -104,6 +120,8 @@ export default async function TeamRolePage({
   const currentTeam = myMembership?.team_id
     ? (teams || []).find((t: any) => t.id === myMembership.team_id)
     : null;
+
+  const defaultRole = (myMembership?.role ? String(myMembership.role) : "hc").toLowerCase();
 
   return (
     <div className="grid">
@@ -131,17 +149,20 @@ export default async function TeamRolePage({
             <label className="label">Team</label>
             <select className="input" name="teamId" defaultValue={myMembership?.team_id ?? ""}>
               <option value="">— Choose team —</option>
-              {(teams || []).map((t: any) => (
-                <option key={t.id} value={t.id}>
-                  {(t.conference_name || t.conference ? `${t.conference_name || t.conference} — ` : "") + t.name}
-                </option>
-              ))}
+              {(teams || []).map((t: any) => {
+                const conf = t.conference_name || t.conference || "";
+                return (
+                  <option key={t.id} value={t.id}>
+                    {(conf ? `${conf} — ` : "") + t.name}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
           <div className="col12">
             <label className="label">Role</label>
-            <select className="input" name="role" defaultValue={(myMembership?.role || "hc").toLowerCase()}>
+            <select className="input" name="role" defaultValue={defaultRole}>
               {ROLES.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
@@ -167,9 +188,9 @@ export default async function TeamRolePage({
       <div className="card col12">
         <div className="h2">Recommended flow</div>
         <ul className="muted">
-          <li>HC: sets depth chart, recruiting board, gameplan.</li>
-          <li>OC/DC: specialize recruiting + weekly strategy (later we’ll gate features by role).</li>
-          <li>AD: budgets, facilities, NIL emphasis (later we’ll add team budget controls).</li>
+          <li>HC: sets depth chart, recruiting board, weekly strategy.</li>
+          <li>OC/DC: specialize recruiting + weekly tactics (we’ll gate features by role).</li>
+          <li>AD: budgets, facilities, NIL emphasis (we’ll add budgets next).</li>
         </ul>
       </div>
     </div>
