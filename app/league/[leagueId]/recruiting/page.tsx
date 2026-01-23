@@ -1,172 +1,21 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "../../../../lib/supabaseServer";
+import {
+  addToBoardAction,
+  removeFromBoardAction,
+  scheduleVisitAction,
+  setPipelineAction,
+  removePipelineAction
+} from "./actions";
 
 function enc(s: string) {
   return encodeURIComponent(s);
 }
 
-const VISIT_TYPES = [
-  { id: "unofficial", label: "Unofficial" },
-  { id: "official", label: "Official" },
-  { id: "game", label: "Game Day" }
-] as const;
-
-async function addToBoardAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  const slot = Number(String(formData.get("slot") || "0"));
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Settings → Team & Role).")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit id.")}`);
-  if (!slot || slot < 1 || slot > 8) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a slot 1–8.")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("add_to_board", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-    p_slot: slot
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Added to Top-8 board.")}`);
-}
-
-async function removeFromBoardAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first.")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit id.")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("remove_from_board", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Removed from board.")}`);
-}
-
-async function scheduleVisitAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  const week = Number(String(formData.get("week") || "0"));
-  const visitType = String(formData.get("visitType") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first.")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit id.")}`);
-  if (!week) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a week.")}`);
-  if (!visitType) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a visit type.")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("schedule_visit", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-    p_week: week,
-    p_visit_type: visitType
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Visit scheduled.")}`);
-}
-
-async function clearVisitAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first.")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit id.")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("clear_visit", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Visit cleared.")}`);
-}
-
-async function addPipelineAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const state = String(formData.get("state") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first.")}`);
-  if (!state) redirect(`/league/${leagueId}/recruiting?err=${enc("Enter a state code (e.g., MD).")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("set_pipeline_state", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_state: state,
-    p_bonus: 5
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Pipeline saved.")}`);
-}
-
-async function removePipelineAction(formData: FormData) {
-  "use server";
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const state = String(formData.get("state") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first.")}`);
-  if (!state) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing state.")}`);
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("remove_pipeline_state", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_state: state
-  });
-
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Pipeline removed.")}`);
-}
-
-function starsText(n: number) {
-  const s = Math.max(1, Math.min(5, n || 1));
-  return "★".repeat(s);
+function stars(n: number) {
+  const v = Math.max(1, Math.min(5, n || 1));
+  return "★".repeat(v);
 }
 
 export default async function RecruitingPage({
@@ -177,12 +26,11 @@ export default async function RecruitingPage({
   searchParams?: {
     msg?: string;
     err?: string;
+    q?: string;
     pos?: string;
     state?: string;
-    stars?: string;
-    qmin?: string;
-    qmax?: string;
-    team?: string;
+    arch?: string;
+    minStars?: string;
   };
 }) {
   const supabase = supabaseServer();
@@ -195,7 +43,7 @@ export default async function RecruitingPage({
 
   const { data: league } = await supabase
     .from("leagues")
-    .select("id,name,current_week,current_season")
+    .select("id,name,current_season,current_week")
     .eq("id", params.leagueId)
     .single();
 
@@ -206,18 +54,16 @@ export default async function RecruitingPage({
     .eq("user_id", userData.user.id)
     .maybeSingle();
 
-  const teamId = (searchParams?.team || myMembership?.team_id || "").toString();
+  const teamId = myMembership?.team_id || null;
 
-  const { data: teams } = await supabase
-    .from("teams")
-    .select("id,name,conference")
-    .eq("league_id", params.leagueId)
-    .order("conference", { ascending: true })
-    .order("name", { ascending: true });
+  const { data: team } = teamId
+    ? await supabase
+        .from("teams")
+        .select("id,name,conference_name,conference,prestige")
+        .eq("id", teamId)
+        .single()
+    : { data: null as any };
 
-  const selectedTeam = teamId ? (teams || []).find((t: any) => t.id === teamId) : null;
-
-  // Pipelines
   const { data: pipelines } = teamId
     ? await supabase
         .from("team_pipelines")
@@ -227,8 +73,7 @@ export default async function RecruitingPage({
         .order("state", { ascending: true })
     : { data: [] as any[] };
 
-  // Board (Top-8)
-  const { data: boardRows } = teamId
+  const { data: board } = teamId
     ? await supabase
         .from("recruiting_board")
         .select("slot,recruit_id")
@@ -238,205 +83,170 @@ export default async function RecruitingPage({
         .order("slot", { ascending: true })
     : { data: [] as any[] };
 
-  const boardIds = new Set((boardRows || []).map((b: any) => b.recruit_id));
+  const boardIds = (board || []).map((b: any) => b.recruit_id);
 
-  // Pull recruit details for board
-  const boardRecruitIds = (boardRows || []).map((b: any) => b.recruit_id);
   const { data: boardRecruits } =
-    teamId && boardRecruitIds.length
+    teamId && boardIds.length
       ? await supabase
           .from("recruits")
           .select("id,name,position,stars,rank,state,height_in,weight_lb,archetype,quality")
-          .eq("league_id", params.leagueId)
-          .in("id", boardRecruitIds)
+          .in("id", boardIds)
       : { data: [] as any[] };
 
-  const boardRecruitMap = new Map((boardRecruits || []).map((r: any) => [r.id, r]));
+  const recruitsById = new Map<string, any>();
+  (boardRecruits || []).forEach((r: any) => recruitsById.set(r.id, r));
 
-  // Visits for team
-  const { data: visits } = teamId
-    ? await supabase
-        .from("recruit_visits")
-        .select("recruit_id,week,visit_type")
-        .eq("league_id", params.leagueId)
-        .eq("team_id", teamId)
-    : { data: [] as any[] };
+  const { data: visits } =
+    teamId && boardIds.length
+      ? await supabase
+          .from("recruit_visits")
+          .select("recruit_id,week,visit_type")
+          .eq("league_id", params.leagueId)
+          .eq("team_id", teamId)
+      : { data: [] as any[] };
 
-  const visitMap = new Map((visits || []).map((v: any) => [v.recruit_id, v]));
+  const visitByRecruit = new Map<string, any>();
+  (visits || []).forEach((v: any) => visitByRecruit.set(v.recruit_id, v));
 
-  // Recruit search filters
+  // Search
+  const q = (searchParams?.q || "").trim();
   const pos = (searchParams?.pos || "").trim();
-  const state = (searchParams?.state || "").trim().toUpperCase();
-  const stars = Number(searchParams?.stars || "0");
-  const qmin = Number(searchParams?.qmin || "0");
-  const qmax = Number(searchParams?.qmax || "0");
+  const st = (searchParams?.state || "").trim().toUpperCase();
+  const arch = (searchParams?.arch || "").trim();
+  const minStars = Number(searchParams?.minStars || "0");
 
-  let recruitsQuery = supabase
+  let query = supabase
     .from("recruits")
-    .select("id,name,position,stars,rank,state,height_in,weight_lb,archetype,quality")
+    .select("id,name,position,stars,rank,state,height_in,weight_lb,archetype,quality", { count: "exact" })
     .eq("league_id", params.leagueId)
+    .is("committed_team_id", null)
+    .order("stars", { ascending: false })
     .order("rank", { ascending: true })
-    .limit(100);
+    .limit(50);
 
-  if (pos) recruitsQuery = recruitsQuery.eq("position", pos);
-  if (state) recruitsQuery = recruitsQuery.eq("state", state);
-  if (stars >= 1 && stars <= 5) recruitsQuery = recruitsQuery.eq("stars", stars);
-  if (qmin > 0) recruitsQuery = recruitsQuery.gte("quality", qmin);
-  if (qmax > 0) recruitsQuery = recruitsQuery.lte("quality", qmax);
+  if (q) query = query.ilike("name", `%${q}%`);
+  if (pos) query = query.eq("position", pos);
+  if (st) query = query.eq("state", st);
+  if (arch) query = query.eq("archetype", arch);
+  if (minStars > 0) query = query.gte("stars", minStars);
 
-  const { data: recruits } = await recruitsQuery;
+  const { data: searchResults, count } = await query;
 
-  const weekNow = Number(league?.current_week || 1);
-  const weekOptions = Array.from({ length: 10 }, (_, i) => i + weekNow).filter((w) => w >= 1 && w <= 20);
+  const usedSlots = new Set<number>((board || []).map((b: any) => b.slot));
 
   return (
     <div className="grid">
       <div className="card col12">
         <div className="h1">Recruiting — {league?.name}</div>
         <p className="muted">
-          Top-8 board + pipelines + visits (v1). Season {league?.current_season} · Week {league?.current_week}
+          Season {league?.current_season} · Week {league?.current_week} ·
+          {team ? ` Team: ${team.conference_name || team.conference || ""} ${team.name}` : " Pick a team in Team & Role to start."}
         </p>
         {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
 
-        <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          <Link className="btn secondary" href={`/league/${params.leagueId}`}>
-            Back to League
-          </Link>
-          <Link className="btn secondary" href={`/league/${params.leagueId}/settings`}>
-            Settings
-          </Link>
-        </div>
+        {!teamId ? (
+          <p className="muted" style={{ marginTop: 8 }}>
+            You must set your Team & Role first.{" "}
+            <Link href={`/league/${params.leagueId}/team-role`} className="btn secondary">
+              Team & Role
+            </Link>
+          </p>
+        ) : null}
       </div>
 
+      {/* Pipelines */}
       <div className="card col12">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div>
-            <div className="h2">Team Context</div>
-            <p className="muted">
-              Selected team is required for board/pipelines/visits.
-            </p>
-          </div>
+        <div className="h2">Pipelines (max 3)</div>
+        <p className="muted">Adds a small weekly bonus for recruits from those states.</p>
 
-          <form method="get" className="row" style={{ gap: 8 }}>
-            <select className="input" name="team" defaultValue={teamId || ""}>
-              <option value="">— Choose team —</option>
-              {(teams || []).map((t: any) => (
-                <option key={t.id} value={t.id}>
-                  {(t.conference ? `${t.conference} — ` : "") + t.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn" type="submit">
-              Use Team
-            </button>
-          </form>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          {(pipelines || []).map((p: any) => (
+            <form key={p.id} action={removePipelineAction} className="row" style={{ gap: 8 }}>
+              <input type="hidden" name="leagueId" value={params.leagueId} />
+              <input type="hidden" name="teamId" value={teamId ?? ""} />
+              <input type="hidden" name="state" value={p.state} />
+              <span className="badge">{p.state} (+{p.bonus})</span>
+              <button className="btn secondary" type="submit">Remove</button>
+            </form>
+          ))}
+          {(!pipelines || pipelines.length === 0) ? <span className="muted">No pipelines set.</span> : null}
         </div>
 
-        {!teamId ? (
-          <p className="muted" style={{ marginTop: 10 }}>
-            No team selected. Go to <Link href={`/league/${params.leagueId}/settings`}>Settings</Link> to pick a team & role, or select one above.
-          </p>
-        ) : (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Active team: <strong>{selectedTeam ? selectedTeam.name : teamId}</strong>
-          </p>
-        )}
+        {teamId ? (
+          <form action={setPipelineAction} className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <input type="hidden" name="leagueId" value={params.leagueId} />
+            <input type="hidden" name="teamId" value={teamId} />
+            <input className="input" name="state" placeholder="State (e.g., MD)" maxLength={2} />
+            <input className="input" name="bonus" placeholder="Bonus (default 5)" defaultValue="5" />
+            <button className="btn" type="submit">Add/Update</button>
+          </form>
+        ) : null}
       </div>
 
-      {/* Left: Board + Pipelines */}
-      <div className="card col6">
+      {/* Top-8 */}
+      <div className="card col12">
         <div className="h2">Your Top-8 Board</div>
-        <p className="muted">Slots 1–8. Add recruits from the search list.</p>
+        <p className="muted">You can only schedule visits for recruits on your Top-8.</p>
 
         {!teamId ? (
-          <p className="muted">Pick a team to use the board.</p>
+          <p className="muted">Pick a team first.</p>
         ) : (
           <table className="table" style={{ marginTop: 12 }}>
             <thead>
               <tr>
                 <th>Slot</th>
                 <th>Recruit</th>
+                <th>Pos</th>
+                <th>Stars</th>
+                <th>State</th>
                 <th>Visit</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: 8 }, (_, i) => i + 1).map((slot) => {
-                const row = (boardRows || []).find((b: any) => b.slot === slot);
-                const rec = row ? boardRecruitMap.get(row.recruit_id) : null;
-                const visit = row ? visitMap.get(row.recruit_id) : null;
+              {Array.from({ length: 8 }).map((_, i) => {
+                const slot = i + 1;
+                const b = (board || []).find((x: any) => x.slot === slot);
+                const r = b ? recruitsById.get(b.recruit_id) : null;
+                const v = b ? visitByRecruit.get(b.recruit_id) : null;
 
                 return (
                   <tr key={slot}>
-                    <td>#{slot}</td>
+                    <td>{slot}</td>
+                    <td>{r ? r.name : <span className="muted">Empty</span>}</td>
+                    <td>{r?.position || "—"}</td>
+                    <td>{r ? stars(r.stars) : "—"}</td>
+                    <td>{r?.state || "—"}</td>
                     <td>
-                      {rec ? (
-                        <div>
-                          <div>
-                            <strong>{rec.name}</strong> · {rec.position} · {starsText(rec.stars)} · Q{rec.quality}
-                          </div>
-                          <div className="muted">
-                            {rec.state} · {Math.floor(rec.height_in / 12)}'{rec.height_in % 12}" / {rec.weight_lb} · {rec.archetype}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="muted">Empty</span>
-                      )}
-                    </td>
-                    <td>
-                      {!rec ? (
-                        <span className="muted">—</span>
-                      ) : visit ? (
-                        <div>
-                          <div>
-                            <strong>W{visit.week}</strong> · {String(visit.visit_type).toUpperCase()}
-                          </div>
-                          <form action={clearVisitAction} className="row" style={{ gap: 8, marginTop: 6 }}>
-                            <input type="hidden" name="leagueId" value={params.leagueId} />
-                            <input type="hidden" name="teamId" value={teamId} />
-                            <input type="hidden" name="recruitId" value={rec.id} />
-                            <button className="btn secondary" type="submit">
-                              Clear
-                            </button>
-                          </form>
-                        </div>
-                      ) : (
-                        <form action={scheduleVisitAction} className="row" style={{ gap: 8, alignItems: "center" }}>
+                      {r ? (
+                        <form action={scheduleVisitAction} className="row" style={{ gap: 8 }}>
                           <input type="hidden" name="leagueId" value={params.leagueId} />
                           <input type="hidden" name="teamId" value={teamId} />
-                          <input type="hidden" name="recruitId" value={rec.id} />
-                          <select className="input" name="week" defaultValue={String(weekNow)}>
-                            {weekOptions.map((w) => (
-                              <option key={w} value={w}>
-                                Week {w}
-                              </option>
-                            ))}
+                          <input type="hidden" name="recruitId" value={r.id} />
+                          <input className="input" name="week" placeholder="Week" defaultValue={v?.week ?? ""} style={{ width: 90 }} />
+                          <select className="input" name="visitType" defaultValue={v?.visit_type ?? "official"}>
+                            <option value="unofficial">Unofficial</option>
+                            <option value="official">Official</option>
+                            <option value="game">Game</option>
                           </select>
-                          <select className="input" name="visitType" defaultValue="official">
-                            {VISIT_TYPES.map((v) => (
-                              <option key={v.id} value={v.id}>
-                                {v.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button className="btn" type="submit">
-                            Schedule
-                          </button>
+                          <button className="btn secondary" type="submit">Save</button>
                         </form>
+                      ) : (
+                        "—"
                       )}
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      {rec ? (
+                      {r ? (
                         <form action={removeFromBoardAction}>
                           <input type="hidden" name="leagueId" value={params.leagueId} />
                           <input type="hidden" name="teamId" value={teamId} />
-                          <input type="hidden" name="recruitId" value={rec.id} />
-                          <button className="btn danger" type="submit">
-                            Remove
-                          </button>
+                          <input type="hidden" name="recruitId" value={r.id} />
+                          <button className="btn secondary" type="submit">Remove</button>
                         </form>
-                      ) : null}
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -444,121 +254,97 @@ export default async function RecruitingPage({
             </tbody>
           </table>
         )}
-
-        <div className="h2" style={{ marginTop: 18 }}>
-          Pipelines (max 3)
-        </div>
-        <p className="muted">Pipelines will later give weekly recruiting bonuses for in-state recruits.</p>
-
-        {!teamId ? (
-          <p className="muted">Pick a team to manage pipelines.</p>
-        ) : (
-          <>
-            <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-              {(pipelines || []).map((p: any) => (
-                <form key={p.id} action={removePipelineAction} className="row" style={{ gap: 8, alignItems: "center" }}>
-                  <input type="hidden" name="leagueId" value={params.leagueId} />
-                  <input type="hidden" name="teamId" value={teamId} />
-                  <input type="hidden" name="state" value={p.state} />
-                  <span className="muted">
-                    <strong>{p.state}</strong> (+{p.bonus})
-                  </span>
-                  <button className="btn secondary" type="submit">
-                    Remove
-                  </button>
-                </form>
-              ))}
-              {(!pipelines || pipelines.length === 0) ? <span className="muted">No pipelines yet.</span> : null}
-            </div>
-
-            <form action={addPipelineAction} className="row" style={{ gap: 8, marginTop: 10, alignItems: "center" }}>
-              <input type="hidden" name="leagueId" value={params.leagueId} />
-              <input type="hidden" name="teamId" value={teamId} />
-              <input className="input" name="state" placeholder="State (e.g., MD)" style={{ maxWidth: 160 }} />
-              <button className="btn" type="submit">
-                Add Pipeline
-              </button>
-            </form>
-          </>
-        )}
       </div>
 
-      {/* Right: Search & Add */}
-      <div className="card col6">
+      {/* Search */}
+      <div className="card col12">
         <div className="h2">Recruit Search</div>
-        <p className="muted">
-          Filter and add recruits to your Top-8 board. This list is limited to 100 results.
-        </p>
+        <p className="muted">Shows up to 50 uncommitted recruits (filterable). Found: {count ?? 0}</p>
 
-        <form method="get" className="grid" style={{ gap: 10, marginTop: 12 }}>
-          <input type="hidden" name="team" value={teamId} />
-          <div className="col12 row" style={{ gap: 8, flexWrap: "wrap" }}>
-            <input className="input" name="pos" placeholder="Position (QB/RB/WR/...)" defaultValue={pos} />
-            <input className="input" name="state" placeholder="State (MD/PA/...)" defaultValue={state} />
-            <input className="input" name="stars" placeholder="Stars (1-5)" defaultValue={stars ? String(stars) : ""} />
+        <form method="get" className="grid" style={{ gap: 12, marginTop: 12 }}>
+          <div className="col12">
+            <label className="label">Name</label>
+            <input className="input" name="q" defaultValue={q} placeholder="Search name..." />
           </div>
+
+          <div className="col12 row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 160, flex: "1 1 160px" }}>
+              <label className="label">Position</label>
+              <input className="input" name="pos" defaultValue={pos} placeholder="QB, RB, WR..." />
+            </div>
+            <div style={{ minWidth: 160, flex: "1 1 160px" }}>
+              <label className="label">State</label>
+              <input className="input" name="state" defaultValue={st} placeholder="MD" maxLength={2} />
+            </div>
+            <div style={{ minWidth: 180, flex: "1 1 180px" }}>
+              <label className="label">Archetype</label>
+              <input className="input" name="arch" defaultValue={arch} placeholder="Scrambler..." />
+            </div>
+            <div style={{ minWidth: 140, flex: "1 1 140px" }}>
+              <label className="label">Min Stars</label>
+              <input className="input" name="minStars" defaultValue={minStars ? String(minStars) : ""} placeholder="3" />
+            </div>
+          </div>
+
           <div className="col12 row" style={{ gap: 8 }}>
-            <input className="input" name="qmin" placeholder="Min Quality" defaultValue={qmin ? String(qmin) : ""} />
-            <input className="input" name="qmax" placeholder="Max Quality" defaultValue={qmax ? String(qmax) : ""} />
-            <button className="btn" type="submit">
-              Apply Filters
-            </button>
+            <button className="btn" type="submit">Search</button>
+            <Link className="btn secondary" href={`/league/${params.leagueId}`}>Back</Link>
           </div>
         </form>
 
         <table className="table" style={{ marginTop: 12 }}>
           <thead>
             <tr>
+              <th>Name</th>
+              <th>Pos</th>
+              <th>Stars</th>
               <th>Rank</th>
-              <th>Recruit</th>
-              <th></th>
+              <th>State</th>
+              <th>Archetype</th>
+              <th>OVR</th>
+              <th>Add to slot</th>
             </tr>
           </thead>
           <tbody>
-            {(recruits || []).map((r: any) => {
-              const onBoard = boardIds.has(r.id);
-              return (
-                <tr key={r.id}>
-                  <td>#{r.rank}</td>
-                  <td>
-                    <div>
-                      <strong>{r.name}</strong> · {r.position} · {starsText(r.stars)} · Q{r.quality}
-                    </div>
-                    <div className="muted">
-                      {r.state} · {Math.floor(r.height_in / 12)}'{r.height_in % 12}" / {r.weight_lb} · {r.archetype}
-                    </div>
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {!teamId ? (
-                      <span className="muted">Pick team</span>
-                    ) : onBoard ? (
-                      <span className="muted">On board</span>
-                    ) : (
-                      <form action={addToBoardAction} className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
-                        <input type="hidden" name="leagueId" value={params.leagueId} />
-                        <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="recruitId" value={r.id} />
-                        <select className="input" name="slot" defaultValue="1">
-                          {Array.from({ length: 8 }, (_, i) => i + 1).map((s) => (
-                            <option key={s} value={s}>
-                              Slot {s}
+            {(searchResults || []).map((r: any) => (
+              <tr key={r.id}>
+                <td>{r.name}</td>
+                <td>{r.position}</td>
+                <td>{stars(r.stars)}</td>
+                <td>{r.rank}</td>
+                <td>{r.state}</td>
+                <td>{r.archetype}</td>
+                <td>{r.quality}</td>
+                <td style={{ textAlign: "right" }}>
+                  {!teamId ? (
+                    <span className="muted">Pick team</span>
+                  ) : (
+                    <form action={addToBoardAction} className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+                      <input type="hidden" name="leagueId" value={params.leagueId} />
+                      <input type="hidden" name="teamId" value={teamId} />
+                      <input type="hidden" name="recruitId" value={r.id} />
+                      <select className="input" name="slot" defaultValue="">
+                        <option value="" disabled>
+                          Slot…
+                        </option>
+                        {Array.from({ length: 8 }).map((_, i) => {
+                          const slot = i + 1;
+                          return (
+                            <option key={slot} value={slot}>
+                              {slot}{usedSlots.has(slot) ? " (replace)" : ""}
                             </option>
-                          ))}
-                        </select>
-                        <button className="btn" type="submit">
-                          Add
-                        </button>
-                      </form>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {(!recruits || recruits.length === 0) ? (
-              <tr>
-                <td className="muted" colSpan={3}>
-                  No recruits found for current filters.
+                          );
+                        })}
+                      </select>
+                      <button className="btn secondary" type="submit">Add</button>
+                    </form>
+                  )}
                 </td>
+              </tr>
+            ))}
+            {(!searchResults || searchResults.length === 0) ? (
+              <tr>
+                <td className="muted" colSpan={8}>No recruits found.</td>
               </tr>
             ) : null}
           </tbody>
