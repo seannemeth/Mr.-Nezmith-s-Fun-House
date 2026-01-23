@@ -26,7 +26,6 @@ function normalizeRole(input: unknown): RoleId | "" {
   if (v === "oc") return "oc";
   if (v === "dc") return "dc";
 
-  // allow a few friendly inputs
   if (v === "headcoach" || v === "coach") return "hc";
   if (v === "athleticdirector") return "ad";
   if (v === "offensivecoordinator") return "oc";
@@ -85,7 +84,12 @@ async function deleteLeagueAction(formData: FormData) {
   "use server";
 
   const leagueId = String(formData.get("leagueId") || "").trim();
+  const confirm = String(formData.get("confirm") || "").trim();
+
   if (!leagueId) redirect(`/`);
+  if (confirm !== "DELETE") {
+    redirect(`/league/${leagueId}/settings?err=${enc('Type "DELETE" to confirm league deletion.')}`);
+  }
 
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
@@ -166,12 +170,10 @@ export default async function SettingsPage(props: {
     );
   }
 
-  // Fetch all memberships for this league (to show taken roles per team)
-  // Note: your RLS might only allow "own" membership rows. If so, this may return empty.
-  // If it’s empty due to RLS, the UI still works; it just won’t show availability.
+  // Optional availability (may be empty depending on RLS)
   const { data: leagueMemberships } = await supabase
     .from("memberships")
-    .select("team_id,role,user_id")
+    .select("team_id,role")
     .eq("league_id", params.leagueId);
 
   const takenByTeamRole = new Map<string, Set<string>>();
@@ -214,9 +216,7 @@ export default async function SettingsPage(props: {
 
       <div className="card col12">
         <div className="h2">Invite</div>
-        <p className="muted">
-          Share this code so friends can join your league:
-        </p>
+        <p className="muted">Share this code so friends can join your league:</p>
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <div className="pill" style={{ fontFamily: "monospace" }}>
             {league.invite_code}
@@ -247,9 +247,7 @@ export default async function SettingsPage(props: {
                 const taken = takenByTeamRole.get(String(t.id)) || new Set<string>();
                 const suffix =
                   taken.size > 0
-                    ? ` (taken: ${Array.from(taken)
-                        .map((x) => x.toUpperCase())
-                        .join(", ")})`
+                    ? ` (taken: ${Array.from(taken).map((x) => x.toUpperCase()).join(", ")})`
                     : "";
                 return (
                   <option key={t.id} value={t.id}>
@@ -278,8 +276,7 @@ export default async function SettingsPage(props: {
           </div>
 
           <p className="muted" style={{ marginTop: 6 }}>
-            If you still see “Invalid role”, it means the database RPC is rejecting the value.
-            The only accepted v1 roles are: ad, hc, oc, dc.
+            Accepted roles: ad, hc, oc, dc. If you still see “Invalid role”, your DB RPC is still not the canonical one.
           </p>
         </form>
       </div>
@@ -289,28 +286,29 @@ export default async function SettingsPage(props: {
         {!isCommissioner ? (
           <p className="muted">Only the commissioner can advance weeks or delete the league.</p>
         ) : (
-          <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-            <form action={advanceWeekAction}>
-              <input type="hidden" name="leagueId" value={params.leagueId} />
-              <button className="btn" type="submit">
-                Advance Week
-              </button>
-            </form>
+          <div className="grid" style={{ gap: 14 }}>
+            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+              <form action={advanceWeekAction}>
+                <input type="hidden" name="leagueId" value={params.leagueId} />
+                <button className="btn" type="submit">
+                  Advance Week
+                </button>
+              </form>
+            </div>
 
-            <form
-              action={deleteLeagueAction}
-              onSubmit={async (e) => {
-                // client-side confirm to prevent accidental deletion
-                // (works in Next App Router since this is a Server Action form)
-                // @ts-ignore
-                if (!confirm("Delete this league? This cannot be undone.")) e.preventDefault();
-              }}
-            >
-              <input type="hidden" name="leagueId" value={params.leagueId} />
-              <button className="btn danger" type="submit">
-                Delete League
-              </button>
-            </form>
+            <div className="card" style={{ borderStyle: "dashed" }}>
+              <div className="h3">Delete league (danger)</div>
+              <p className="muted">
+                This cannot be undone. Type <strong>DELETE</strong> and click the button.
+              </p>
+              <form action={deleteLeagueAction} className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <input type="hidden" name="leagueId" value={params.leagueId} />
+                <input className="input" name="confirm" placeholder='Type "DELETE"' />
+                <button className="btn danger" type="submit">
+                  Delete League
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </div>
