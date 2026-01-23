@@ -4,150 +4,181 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "../lib/supabaseServer";
 
 function enc(s: string) {
-  return encodeURIComponent(s);
+  return encodeURIComponent(s ?? "");
 }
 
-export async function signInAction(formData: FormData) {
-  const email = String(formData.get("email") || "").trim();
-  const password = String(formData.get("password") || "").trim();
-
-  const sb = supabaseServer();
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-
-  if (error) redirect(`/login?err=${enc(error.message)}`);
-  redirect(`/`);
+function leaguePath(leagueId: string, path: string) {
+  return `/league/${leagueId}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-export async function signUpAction(formData: FormData) {
-  const email = String(formData.get("email") || "").trim();
-  const password = String(formData.get("password") || "").trim();
+/**
+ * Recruiting actions
+ * - Top-8 board slot
+ * - Offers (35 active cap enforced in SQL)
+ * - Visits
+ */
 
-  const sb = supabaseServer();
-  const { error } = await sb.auth.signUp({ email, password });
-
-  if (error) redirect(`/login?err=${enc(error.message)}`);
-  redirect(`/login?ok=${enc("Check your email to confirm your account, then sign in.")}`);
-}
-
-export async function signOutAction() {
-  const sb = supabaseServer();
-  await sb.auth.signOut();
-  redirect("/login?ok=" + enc("Signed out."));
-}
-
-export async function createLeagueAction(formData: FormData) {
-  const name = String(formData.get("name") || "").trim();
-  if (!name) redirect(`/league/new?err=${enc("League name is required.")}`);
-
-  const sb = supabaseServer();
-  const { data: userRes } = await sb.auth.getUser();
-  const user = userRes.user;
-  if (!user) redirect(`/login?err=${enc("Please sign in.")}`);
-
-  const { TEAM_PRESET_FBS_GENERIC } = await import("../lib/teamPresets");
-  const teamNames = TEAM_PRESET_FBS_GENERIC.conferences.flatMap(c => c.teams.map(t => t.name));
-
-  const { data, error } = await sb.rpc("create_league_with_teams", {
-    p_name: name,
-    p_team_names: teamNames,
-  });
-
-  if (error) redirect(`/league/new?err=${enc(error.message)}`);
-
-  redirect(`/league/${String(data)}`);
-}
-
-export async function deleteLeagueAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
-
-  const sb = supabaseServer();
-  const { data: userRes } = await sb.auth.getUser();
-  const user = userRes.user;
-  if (!user) redirect(`/login?err=${enc("Please sign in.")}`);
-
-  const { error } = await sb.rpc("delete_league", { p_league_id: leagueId });
-  if (error) redirect(`/?err=${enc(error.message)}`);
-
-  redirect(`/?ok=${enc("League deleted.")}`);
-}
-
-export async function joinLeagueAction(formData: FormData) {
-  const code = String(formData.get("inviteCode") || "").trim();
-  if (!code) redirect(`/league/join?err=${enc("Invite code is required.")}`);
-
-  const sb = supabaseServer();
-  const { data, error } = await sb.rpc("join_league_by_code", { p_invite_code: code });
-  if (error) redirect(`/league/join?err=${enc(error.message)}`);
-
-  redirect(`/league/${String(data)}`);
-}
-
-export async function advanceWeekAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
-
-  const sb = supabaseServer();
-  const { error } = await sb.rpc("advance_week", { p_league_id: leagueId });
-  if (error) redirect(`/league/${leagueId}?err=${enc(error.message)}`);
-
-  redirect(`/league/${leagueId}?ok=${enc("Week advanced.")}`);
-}
-
-export async function selectRoleAction(formData: FormData) {
+export async function setRecruitingBoardSlotAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
-  const role = String(formData.get("role") || "Head Coach").trim();
+  const recruitId = String(formData.get("recruitId") || "").trim();
+  const slotRaw = String(formData.get("slot") || "").trim();
 
-  const sb = supabaseServer();
-  const { error } = await sb.rpc("set_membership_team_role", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_role: role
-  });
+  if (!leagueId) redirect("/");
+  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
+  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  if (error) redirect(`/league/${leagueId}/settings?err=${enc(error.message)}`);
-  redirect(`/league/${leagueId}/settings?ok=${enc("Role saved.")}`);
-}
-
-// ===== Teams: update basic team fields (commissioner only via RLS/ownership checks)
-export async function updateTeamAction(formData: FormData) {
-  "use server";
-
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-
-  const name = String(formData.get("name") || "").trim();
-  const short_name = String(formData.get("short_name") || "").trim();
-  const prestige = Number(formData.get("prestige") || 50);
-  const rating_off = Number(formData.get("rating_off") || 50);
-  const rating_def = Number(formData.get("rating_def") || 50);
-  const rating_st = Number(formData.get("rating_st") || 50);
-
-  if (!leagueId || !teamId) {
-    throw new Error("Missing leagueId or teamId");
+  const slot = Number(slotRaw);
+  if (!Number.isFinite(slot) || slot < 1 || slot > 8) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid Top-8 slot.")}`));
   }
-  if (!name || !short_name) {
-    throw new Error("Name and short name are required");
-  }
-
-  // Lazy import to avoid edge bundling issues
-  const { supabaseServer } = await import("../lib/supabaseServer");
 
   const supabase = supabaseServer();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase
-    .from("teams")
-    .update({
-      name,
-      short_name,
-      prestige,
-      rating_off,
-      rating_def,
-      rating_st
-    })
-    .eq("id", teamId)
-    .eq("league_id", leagueId);
+  const { error } = await supabase.rpc("set_recruiting_board_slot", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_slot: slot,
+    p_recruit_id: recruitId
+  });
 
-  if (error) throw error;
+  if (error) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
+  }
+
+  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Added to Top-8.")}`));
+}
+
+export async function removeRecruitFromBoardAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+  const recruitId = String(formData.get("recruitId") || "").trim();
+
+  if (!leagueId) redirect("/");
+  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
+  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
+
+  const supabase = supabaseServer();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+
+  const { error } = await supabase.rpc("remove_recruit_from_board", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_recruit_id: recruitId
+  });
+
+  if (error) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
+  }
+
+  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Removed from Top-8.")}`));
+}
+
+export async function offerScholarshipAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+  const recruitId = String(formData.get("recruitId") || "").trim();
+  const seasonRaw = String(formData.get("season") || "").trim();
+
+  if (!leagueId) redirect("/");
+  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
+  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
+
+  const season = Number(seasonRaw || "1");
+  if (!Number.isFinite(season) || season < 1) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
+  }
+
+  const supabase = supabaseServer();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+
+  const { error } = await supabase.rpc("offer_scholarship", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_season: season,
+    p_recruit_id: recruitId
+  });
+
+  if (error) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
+  }
+
+  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Scholarship offered.")}`));
+}
+
+export async function withdrawScholarshipAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+  const recruitId = String(formData.get("recruitId") || "").trim();
+  const seasonRaw = String(formData.get("season") || "").trim();
+
+  if (!leagueId) redirect("/");
+  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
+  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
+
+  const season = Number(seasonRaw || "1");
+  if (!Number.isFinite(season) || season < 1) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
+  }
+
+  const supabase = supabaseServer();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+
+  const { error } = await supabase.rpc("withdraw_scholarship", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_season: season,
+    p_recruit_id: recruitId
+  });
+
+  if (error) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
+  }
+
+  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Scholarship withdrawn.")}`));
+}
+
+export async function scheduleRecruitVisitAction(formData: FormData) {
+  const leagueId = String(formData.get("leagueId") || "").trim();
+  const teamId = String(formData.get("teamId") || "").trim();
+  const recruitId = String(formData.get("recruitId") || "").trim();
+  const seasonRaw = String(formData.get("season") || "").trim();
+  const weekRaw = String(formData.get("week") || "").trim();
+
+  if (!leagueId) redirect("/");
+  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
+  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
+
+  const season = Number(seasonRaw || "1");
+  const week = Number(weekRaw);
+
+  if (!Number.isFinite(season) || season < 1) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
+  }
+  if (!Number.isFinite(week) || week < 1 || week > 20) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid visit week.")}`));
+  }
+
+  const supabase = supabaseServer();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+
+  const { error } = await supabase.rpc("schedule_recruit_visit", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_season: season,
+    p_week: week,
+    p_recruit_id: recruitId
+  });
+
+  if (error) {
+    redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
+  }
+
+  redirect(leaguePath(leagueId, `/recruiting?msg=${enc(`Visit scheduled (Week ${week}).`)}`));
 }
