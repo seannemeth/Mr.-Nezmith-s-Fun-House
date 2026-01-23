@@ -162,82 +162,26 @@ export async function updateTeamAction(formData: FormData) {
  * RECRUITING ACTIONS
  * ===================================================================================== */
 
-export async function setRecruitingBoardSlotAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  const slotRaw = String(formData.get("slot") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
-  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
-
-  const slot = Number(slotRaw);
-  if (!Number.isFinite(slot) || slot < 1 || slot > 8) {
-    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid Top-8 slot.")}`));
-  }
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("set_recruiting_board_slot", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_slot: slot,
-    p_recruit_id: recruitId
-  });
-
-  if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
-  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Added to Top-8.")}`));
-}
-
-export async function removeRecruitFromBoardAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
-  if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
-
-  const supabase = supabaseServer();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const { error } = await supabase.rpc("remove_recruit_from_board", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId
-  });
-
-  if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
-  redirect(leaguePath(leagueId, `/recruiting?msg=${enc("Removed from Top-8.")}`));
-}
+// Recruiting v2: the "Top-8 board" is now computed from active offers.
+// We removed manual board slot actions.
 
 export async function offerScholarshipAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
   const recruitId = String(formData.get("recruitId") || "").trim();
-  const seasonRaw = String(formData.get("season") || "").trim();
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
   if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  const season = Number(seasonRaw || "1");
-  if (!Number.isFinite(season) || season < 1) {
-    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
-  }
-
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase.rpc("offer_scholarship", {
+  // Recruiting v2: season is derived from leagues.current_season inside the RPC.
+  const { error } = await supabase.rpc("add_recruiting_offer", {
     p_league_id: leagueId,
     p_team_id: teamId,
-    p_season: season,
     p_recruit_id: recruitId
   });
 
@@ -249,25 +193,19 @@ export async function withdrawScholarshipAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
   const recruitId = String(formData.get("recruitId") || "").trim();
-  const seasonRaw = String(formData.get("season") || "").trim();
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
   if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  const season = Number(seasonRaw || "1");
-  if (!Number.isFinite(season) || season < 1) {
-    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
-  }
-
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase.rpc("withdraw_scholarship", {
+  // Recruiting v2: deactivate the offer for current season
+  const { error } = await supabase.rpc("withdraw_recruiting_offer", {
     p_league_id: leagueId,
     p_team_id: teamId,
-    p_season: season,
     p_recruit_id: recruitId
   });
 
@@ -279,19 +217,14 @@ export async function scheduleRecruitVisitAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
   const recruitId = String(formData.get("recruitId") || "").trim();
-  const seasonRaw = String(formData.get("season") || "").trim();
   const weekRaw = String(formData.get("week") || "").trim();
+  const visitType = String(formData.get("visitType") || "official").trim();
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
   if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  const season = Number(seasonRaw || "1");
   const week = Number(weekRaw);
-
-  if (!Number.isFinite(season) || season < 1) {
-    redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid season.")}`));
-  }
   if (!Number.isFinite(week) || week < 1 || week > 20) {
     redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid visit week.")}`));
   }
@@ -300,12 +233,13 @@ export async function scheduleRecruitVisitAction(formData: FormData) {
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase.rpc("schedule_recruit_visit", {
+  // Recruiting v2: season comes from leagues.current_season inside the RPC.
+  const { error } = await supabase.rpc("set_recruit_visit", {
     p_league_id: leagueId,
     p_team_id: teamId,
-    p_season: season,
+    p_recruit_id: recruitId,
     p_week: week,
-    p_recruit_id: recruitId
+    p_visit_type: visitType
   });
 
   if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));

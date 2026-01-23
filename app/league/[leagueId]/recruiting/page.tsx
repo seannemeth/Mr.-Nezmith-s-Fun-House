@@ -4,8 +4,6 @@ import { supabaseServer } from "../../../../lib/supabaseServer";
 import {
   offerScholarshipAction,
   withdrawScholarshipAction,
-  setRecruitingBoardSlotAction,
-  removeRecruitFromBoardAction,
   scheduleRecruitVisitAction
 } from "../../../actions";
 
@@ -79,45 +77,27 @@ export default async function RecruitingPage({
     .eq("id", teamId)
     .single();
 
-  // Pipelines
+  // Pipelines (v2: state + level)
   const { data: pipelines } = await supabase
     .from("team_pipelines")
-    .select("slot,state")
+    .select("state,level")
+    .eq("league_id", params.leagueId)
     .eq("team_id", teamId)
-    .order("slot", { ascending: true });
-
-  // Top-8 board
-  const { data: board } = await supabase
-    .from("recruiting_board")
-    .select("slot,recruit_id")
-    .eq("team_id", teamId)
-    .order("slot", { ascending: true });
-
-  const boardByRecruit = new Map<string, number>();
-  (board || []).forEach((b: any) => boardByRecruit.set(String(b.recruit_id), Number(b.slot)));
+    .order("level", { ascending: false })
+    .order("state", { ascending: true });
 
   // Visits (this season)
   const { data: visits } = await supabase
     .from("recruit_visits")
-    .select("recruit_id,week")
+    .select("recruit_id,week,visit_type")
+    .eq("league_id", params.leagueId)
     .eq("team_id", teamId)
     .eq("season", season);
 
-  const visitByRecruit = new Map<string, number>();
-  (visits || []).forEach((v: any) => visitByRecruit.set(String(v.recruit_id), Number(v.week)));
-
-  // Offers (this season)
-  const { data: offers } = await supabase
-    .from("recruiting_offers")
-    .select("recruit_id,status,points")
-    .eq("team_id", teamId)
-    .eq("season", season);
-
-  const offerByRecruit = new Map<string, any>();
-  (offers || []).forEach((o: any) => offerByRecruit.set(String(o.recruit_id), o));
-
-  const activeOffersCount =
-    (offers || []).filter((o: any) => String(o.status) === "offered").length;
+  const visitByRecruit = new Map<string, { week: number; visit_type: string }>();
+  (visits || []).forEach((v: any) =>
+    visitByRecruit.set(String(v.recruit_id), { week: Number(v.week), visit_type: String(v.visit_type || "official") })
+  );
 
   // Filters
   const pos = (searchParams?.pos || "").trim().toUpperCase();
@@ -128,24 +108,59 @@ export default async function RecruitingPage({
   const qmin = Number((searchParams?.qmin || "").trim() || "");
   const qmax = Number((searchParams?.qmax || "").trim() || "");
 
-  let recruitsQuery = supabase
-    .from("recruits")
-    .select("id,name,position,stars,rank,state,archetype,quality")
-    .eq("league_id", params.leagueId);
+  // Recruiting v2: fetch recruit list with Top-8 + Offer fields via RPC
+  const { data: recruitList, error: recruitsErr } = await supabase.rpc("get_recruit_list_v1", {
+    p_league_id: params.leagueId,
+    p_team_id: teamId,
+    p_limit: 200,
+    p_offset: 0,
+    p_only_uncommitted: true
+  });
 
-  if (pos && POSITIONS.includes(pos as any)) recruitsQuery = recruitsQuery.eq("position", pos);
-  if (state && state.length === 2) recruitsQuery = recruitsQuery.eq("state", state);
-  if (stars) recruitsQuery = recruitsQuery.eq("stars", Number(stars));
-  if (archetype) recruitsQuery = recruitsQuery.ilike("archetype", `%${archetype}%`);
-  if (Number.isFinite(qmin)) recruitsQuery = recruitsQuery.gte("quality", qmin);
-  if (Number.isFinite(qmax)) recruitsQuery = recruitsQuery.lte("quality", qmax);
-  if (q) recruitsQuery = recruitsQuery.ilike("name", `%${q}%`);
+  const recruits: any[] = (recruitList as any)?.rows || [];
+  const activeOffersCount: number = Number((recruitList as any)?.active_offers ?? 0);
+  const offerCap: number = Number((recruitList as any)?.cap ?? 35);
 
-  const { data: recruits, error: recruitsErr } = await recruitsQuery
-    .order("stars", { ascending: false })
-    .order("quality", { ascending: false })
-    .order("rank", { ascending: true })
-    .limit(200);
+  // Client-side filtering (RPC keeps the server logic simple)
+  const filteredRecruits = (recruits || []).filter((r: any) => {
+    const rPos = String(r.pos || r.position || "").toUpperCase();
+    const rState = String(r.state || "").toUpperCase();
+    const rStars = Number(r.stars || 0);
+    const rArch = String(r.archetype || "");
+    const rOvr = Number(r.ovr ?? r.quality ?? 0);
+    const rName = String(r.name || "");
+
+    if (pos && POSITIONS.includes(pos as any) && rPos !== pos) return false;
+    if (state && state.length === 2 && rState !== state) return false;
+    if (stars && rStars !== Number(stars)) return false;
+    if (archetype && !rArch.toLowerCase().includes(archetype.toLowerCase())) return false;
+    if (Number.isFinite(qmin) && qmin > 0 && rOvr < qmin) return false;
+    if (Number.isFinite(qmax) && qmax > 0 && rOvr > qmax) return false;
+    if (q && !rName.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
+
+  // My offers table: fetch ALL active offers for this team/season (not just the first 200 recruits)
+  const { data: myOfferRows } = await supabase
+    .from("recruiting_offers")
+    .select("recruit_id,points")
+    .eq("league_id", params.leagueId)
+    .eq("season", season)
+    .eq("team_id", teamId)
+    .eq("is_active", true)
+    .order("points", { ascending: false })
+    .limit(300);
+
+  const myOfferIds = (myOfferRows || []).map((o: any) => String(o.recruit_id));
+  const { data: myOfferRecruits } = myOfferIds.length
+    ? await supabase
+        .from("recruits")
+        .select("id,name,position,stars,state,archetype,quality,rank")
+        .in("id", myOfferIds)
+    : { data: [] as any[] };
+
+  const recruitById = new Map<string, any>();
+  (myOfferRecruits || []).forEach((r: any) => recruitById.set(String(r.id), r));
 
   return (
     <div className="grid">
@@ -175,15 +190,13 @@ export default async function RecruitingPage({
           <div>
             <div className="h2">Your recruiting state</div>
             <p className="muted" style={{ marginTop: 6 }}>
-              Active offers: <strong>{activeOffersCount}</strong> / 35
-              {" · "}
-              Top-8 filled: <strong>{(board || []).length}</strong> / 8
+              My Offers (Active <strong>{activeOffersCount}</strong>/{offerCap})
             </p>
             <p className="muted" style={{ marginTop: 6 }}>
               Pipelines:{" "}
               {(pipelines || []).length
                 ? (pipelines || [])
-                    .map((p: any) => `${p.slot}: ${p.state}`)
+                    .map((p: any) => `${p.state} (Lv ${p.level})`)
                     .join(" · ")
                 : "Not set yet (optional v1)."}
             </p>
@@ -231,7 +244,7 @@ export default async function RecruitingPage({
           <p className="error" style={{ marginTop: 10 }}>{recruitsErr.message}</p>
         ) : (
           <p className="muted" style={{ marginTop: 10 }}>
-            Showing up to 200 recruits (sorted by Stars → OVR → Rank).
+            Showing {filteredRecruits.length} recruit(s) (server sorted by Stars → OVR → Rank; filters applied client-side).
           </p>
         )}
       </div>
@@ -255,67 +268,52 @@ export default async function RecruitingPage({
             </tr>
           </thead>
           <tbody>
-            {(recruits || []).map((r: any) => {
+            {(filteredRecruits || []).map((r: any) => {
               const rid = String(r.id);
-              const onBoardSlot = boardByRecruit.get(rid);
-              const offer = offerByRecruit.get(rid);
-              const visitWeek = visitByRecruit.get(rid);
+              const offer = r.offer;
+              const top8 = Array.isArray(r.top8) ? r.top8 : [];
+              const visit = visitByRecruit.get(rid);
 
               const starsText = "★★★★★".slice(0, Math.max(1, Math.min(5, Number(r.stars || 1))));
 
               return (
                 <tr key={rid}>
                   <td>{r.name}</td>
-                  <td>{r.position}</td>
+                  <td>{r.pos || r.position}</td>
                   <td>{starsText}</td>
                   <td>{r.rank ?? "—"}</td>
                   <td>{r.state}</td>
                   <td>{r.archetype}</td>
-                  <td>{r.quality}</td>
+                  <td>{r.ovr ?? r.quality}</td>
 
                   <td>
-                    {onBoardSlot ? (
-                      <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <span className="muted">Slot {onBoardSlot}</span>
-                        <form action={removeRecruitFromBoardAction}>
-                          <input type="hidden" name="leagueId" value={params.leagueId} />
-                          <input type="hidden" name="teamId" value={teamId} />
-                          <input type="hidden" name="recruitId" value={rid} />
-                          <button className="btn secondary" type="submit">Remove</button>
-                        </form>
+                    {top8.length ? (
+                      <div className="muted" style={{ maxWidth: 340 }}>
+                        {top8.map((t: any, i: number) => (
+                          <span key={`${rid}-${i}`}>
+                            {i ? " · " : ""}
+                            {t.team_name || t.team_id} ({t.points})
+                          </span>
+                        ))}
                       </div>
                     ) : (
-                      <form action={setRecruitingBoardSlotAction} className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <input type="hidden" name="leagueId" value={params.leagueId} />
-                        <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="recruitId" value={rid} />
-                        <select className="input" name="slot" defaultValue="1" style={{ width: 110 }}>
-                          {Array.from({ length: 8 }).map((_, i) => (
-                            <option key={i + 1} value={i + 1}>
-                              Slot {i + 1}
-                            </option>
-                          ))}
-                        </select>
-                        <button className="btn" type="submit">Add</button>
-                      </form>
+                      <span className="muted">—</span>
                     )}
                   </td>
 
                   <td>
-                    {offer?.status === "offered" ? (
+                    {offer?.is_active ? (
                       <form action={withdrawScholarshipAction} className="row" style={{ gap: 8, alignItems: "center" }}>
                         <input type="hidden" name="leagueId" value={params.leagueId} />
                         <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="season" value={season} />
                         <input type="hidden" name="recruitId" value={rid} />
-                        <span className="muted">Offered</span>
+                        <span className="muted">Offered ({offer.points})</span>
                         <button className="btn secondary" type="submit">Withdraw</button>
                       </form>
                     ) : (
                       <form action={offerScholarshipAction} className="row" style={{ gap: 8, alignItems: "center" }}>
                         <input type="hidden" name="leagueId" value={params.leagueId} />
                         <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="season" value={season} />
                         <input type="hidden" name="recruitId" value={rid} />
                         <button className="btn" type="submit">Offer</button>
                       </form>
@@ -326,17 +324,20 @@ export default async function RecruitingPage({
                     <form action={scheduleRecruitVisitAction} className="row" style={{ gap: 8, alignItems: "center" }}>
                       <input type="hidden" name="leagueId" value={params.leagueId} />
                       <input type="hidden" name="teamId" value={teamId} />
-                      <input type="hidden" name="season" value={season} />
                       <input type="hidden" name="recruitId" value={rid} />
-                      <select className="input" name="week" defaultValue={visitWeek ? String(visitWeek) : "5"} style={{ width: 100 }}>
+                      <select className="input" name="week" defaultValue={visit ? String(visit.week) : "5"} style={{ width: 100 }}>
                         {Array.from({ length: 20 }).map((_, i) => (
                           <option key={i + 1} value={i + 1}>
                             W{i + 1}
                           </option>
                         ))}
                       </select>
+                      <select className="input" name="visitType" defaultValue={visit ? String(visit.visit_type) : "official"} style={{ width: 130 }}>
+                        <option value="official">Official</option>
+                        <option value="unofficial">Unofficial</option>
+                      </select>
                       <button className="btn secondary" type="submit">
-                        {visitWeek ? "Change" : "Set"}
+                        {visit ? "Change" : "Set"}
                       </button>
                     </form>
                   </td>
@@ -344,7 +345,7 @@ export default async function RecruitingPage({
               );
             })}
 
-            {(!recruits || recruits.length === 0) ? (
+            {(!filteredRecruits || filteredRecruits.length === 0) ? (
               <tr>
                 <td colSpan={10} className="muted">
                   No recruits found. If this is a brand-new league, confirm recruits were seeded for this league_id.
@@ -360,56 +361,53 @@ export default async function RecruitingPage({
       </div>
 
       <div className="card col12">
-        <div className="h2">Your Offers (Season {season})</div>
+        <div className="h2">My Offers (Active {activeOffersCount}/{offerCap})</div>
         <p className="muted" style={{ marginTop: 6 }}>
-          Active offers: <strong>{activeOffersCount}</strong> / 35
+          This list is pulled from <code>recruiting_offers</code> for your team (not limited to the first 200 recruits).
         </p>
 
         <table className="table" style={{ marginTop: 12 }}>
           <thead>
             <tr>
-              <th>Status</th>
               <th>Recruit</th>
               <th>Pos</th>
               <th>Stars</th>
               <th>State</th>
               <th>OVR</th>
+              <th>Points</th>
               <th>Visit</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {(offers || [])
-              .filter((o: any) => String(o.status) === "offered")
-              .slice(0, 200)
-              .map((o: any) => {
-                const rid = String(o.recruit_id);
-                const r = (recruits || []).find((x: any) => String(x.id) === rid);
-                const visitWeek = visitByRecruit.get(rid);
+            {(myOfferRows || []).map((o: any) => {
+              const rid = String(o.recruit_id);
+              const r = recruitById.get(rid);
+              const visit = visitByRecruit.get(rid);
+              const starsText = r ? "★★★★★".slice(0, Math.max(1, Math.min(5, Number(r.stars || 1)))) : "—";
 
-                return (
-                  <tr key={rid}>
-                    <td>Offered</td>
-                    <td>{r?.name || rid}</td>
-                    <td>{r?.position || "—"}</td>
-                    <td>{r ? "★★★★★".slice(0, Math.max(1, Math.min(5, Number(r.stars || 1)))) : "—"}</td>
-                    <td>{r?.state || "—"}</td>
-                    <td>{r?.quality ?? "—"}</td>
-                    <td>{visitWeek ? `Week ${visitWeek}` : "—"}</td>
-                    <td>
-                      <form action={withdrawScholarshipAction}>
-                        <input type="hidden" name="leagueId" value={params.leagueId} />
-                        <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="season" value={season} />
-                        <input type="hidden" name="recruitId" value={rid} />
-                        <button className="btn secondary" type="submit">Withdraw</button>
-                      </form>
-                    </td>
-                  </tr>
-                );
-              })}
+              return (
+                <tr key={rid}>
+                  <td>{r?.name || rid}</td>
+                  <td>{r?.position || "—"}</td>
+                  <td>{starsText}</td>
+                  <td>{r?.state || "—"}</td>
+                  <td>{r?.quality ?? "—"}</td>
+                  <td>{o.points ?? 0}</td>
+                  <td>{visit ? `W${visit.week} (${visit.visit_type})` : "—"}</td>
+                  <td>
+                    <form action={withdrawScholarshipAction}>
+                      <input type="hidden" name="leagueId" value={params.leagueId} />
+                      <input type="hidden" name="teamId" value={teamId} />
+                      <input type="hidden" name="recruitId" value={rid} />
+                      <button className="btn secondary" type="submit">Withdraw</button>
+                    </form>
+                  </td>
+                </tr>
+              );
+            })}
 
-            {activeOffersCount === 0 ? (
+            {(!myOfferRows || myOfferRows.length === 0) ? (
               <tr>
                 <td colSpan={8} className="muted">No active offers yet.</td>
               </tr>
