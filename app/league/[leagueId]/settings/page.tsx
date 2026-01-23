@@ -13,51 +13,49 @@ const ROLES = [
   { id: "dc", label: "DC (Defensive Coordinator)" }
 ] as const;
 
-type RoleId = (typeof ROLES)[number]["id"];
-
-function normalizeRole(input: unknown): RoleId | "" {
-  const v = String(input ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
-
-  if (v === "ad") return "ad";
-  if (v === "hc") return "hc";
-  if (v === "oc") return "oc";
-  if (v === "dc") return "dc";
-
-  if (v === "headcoach" || v === "coach") return "hc";
-  if (v === "athleticdirector") return "ad";
-  if (v === "offensivecoordinator") return "oc";
-  if (v === "defensivecoordinator") return "dc";
-
+function normalizeRole(input: string) {
+  const r = (input || "").trim().toLowerCase();
+  if (r === "ad" || r === "hc" || r === "oc" || r === "dc") return r;
   return "";
 }
 
 /** =========================
- *  Server Actions
- *  ========================= */
+ * Server Actions
+ * ========================= */
 
 async function setTeamRoleAction(formData: FormData) {
   "use server";
 
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
-  const role = normalizeRole(formData.get("role"));
+  const roleRaw = String(formData.get("role") || "");
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(`/league/${leagueId}/settings?err=${enc("Pick a team.")}`);
+
+  const role = normalizeRole(roleRaw);
   if (!role) redirect(`/league/${leagueId}/settings?err=${enc("Pick a valid role (AD/HC/OC/DC).")}`);
 
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase.rpc("set_team_role", {
+  // Try lowercase first (most common)
+  let { error } = await supabase.rpc("set_team_role", {
     p_league_id: leagueId,
     p_team_id: teamId,
     p_role: role
   });
+
+  // If your DB function is validating uppercase (HC/OC/DC/AD), retry with uppercase
+  if (error && (error.message || "").toLowerCase().includes("invalid role")) {
+    const retry = await supabase.rpc("set_team_role", {
+      p_league_id: leagueId,
+      p_team_id: teamId,
+      p_role: role.toUpperCase()
+    });
+    error = retry.error;
+  }
 
   if (error) redirect(`/league/${leagueId}/settings?err=${enc(error.message)}`);
 
@@ -77,53 +75,56 @@ async function advanceWeekAction(formData: FormData) {
   const { error } = await supabase.rpc("advance_week", { p_league_id: leagueId });
   if (error) redirect(`/league/${leagueId}/settings?err=${enc(error.message)}`);
 
-  redirect(`/league/${leagueId}?msg=${enc("Advanced one week.")}`);
+  redirect(`/league/${leagueId}?msg=${enc("Advanced to next week.")}`);
 }
 
 async function deleteLeagueAction(formData: FormData) {
   "use server";
 
   const leagueId = String(formData.get("leagueId") || "").trim();
-  const confirm = String(formData.get("confirm") || "").trim();
+  const confirm = String(formData.get("confirm") || "").trim().toUpperCase();
 
   if (!leagueId) redirect(`/`);
   if (confirm !== "DELETE") {
-    redirect(`/league/${leagueId}/settings?err=${enc('Type "DELETE" to confirm league deletion.')}`);
+    redirect(`/league/${leagueId}/settings?err=${enc('Type DELETE to confirm league deletion.')}`);
   }
 
   const supabase = supabaseServer();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // If you don't have this RPC yet, you'll get a clear error message.
+  // CHANGE THIS if your delete RPC is named differently.
   const { error } = await supabase.rpc("delete_league", { p_league_id: leagueId });
+
   if (error) redirect(`/league/${leagueId}/settings?err=${enc(error.message)}`);
 
   redirect(`/?msg=${enc("League deleted.")}`);
 }
 
 /** =========================
- *  Page
- *  ========================= */
+ * Page
+ * ========================= */
 
-export default async function SettingsPage(props: {
+export default async function SettingsPage({
+  params,
+  searchParams
+}: {
   params: { leagueId: string };
   searchParams?: { err?: string; msg?: string };
 }) {
-  const { params, searchParams } = props;
-
   const supabase = supabaseServer();
+
   const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
   const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
 
   const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
-
-  const userId = userData.user.id;
+  if (!userData.user) {
+    redirect(`/login?err=${enc("Please sign in first.")}`);
+  }
 
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
-    .select("id,name,commissioner_id,invite_code,current_season,current_week")
+    .select("id,name,commissioner_id,current_season,current_week")
     .eq("id", params.leagueId)
     .single();
 
@@ -140,20 +141,20 @@ export default async function SettingsPage(props: {
     );
   }
 
-  const isCommissioner = league.commissioner_id === userId;
+  const isCommissioner = league.commissioner_id === userData.user.id;
 
+  // Keep the membership query minimal to avoid schema mismatches.
   const { data: myMembership } = await supabase
     .from("memberships")
     .select("team_id,role")
     .eq("league_id", params.leagueId)
-    .eq("user_id", userId)
+    .eq("user_id", userData.user.id)
     .maybeSingle();
 
   const { data: teams, error: teamsErr } = await supabase
     .from("teams")
-    .select("id,name,conference,conference_name")
+    .select("id,name,conference")
     .eq("league_id", params.leagueId)
-    .order("conference_name", { ascending: true })
     .order("conference", { ascending: true })
     .order("name", { ascending: true });
 
@@ -164,32 +165,23 @@ export default async function SettingsPage(props: {
         <p className="error">Could not load teams.</p>
         <p className="muted">{teamsErr.message}</p>
         <Link className="btn secondary" href={`/league/${params.leagueId}`}>
-          Back
+          Back to League
         </Link>
       </div>
     );
   }
 
-  // Optional availability (may be empty depending on RLS)
-  const { data: leagueMemberships } = await supabase
-    .from("memberships")
-    .select("team_id,role")
-    .eq("league_id", params.leagueId);
+  const currentTeam =
+    myMembership?.team_id && teams
+      ? teams.find((t: any) => t.id === myMembership.team_id)
+      : null;
 
-  const takenByTeamRole = new Map<string, Set<string>>();
-  (leagueMemberships || []).forEach((m: any) => {
-    if (!m.team_id || !m.role) return;
-    const key = String(m.team_id);
-    if (!takenByTeamRole.has(key)) takenByTeamRole.set(key, new Set());
-    takenByTeamRole.get(key)!.add(String(m.role).toLowerCase());
-  });
-
-  const currentRole = myMembership?.role ? String(myMembership.role).toUpperCase() : "—";
-  const currentTeam = myMembership?.team_id
-    ? (teams || []).find((t: any) => t.id === myMembership.team_id)
-    : null;
-
-  const defaultRole = (myMembership?.role ? String(myMembership.role) : "hc").toLowerCase();
+  // If memberships.role is being used for team staff role, show it; otherwise show a dash.
+  const rawRole = (myMembership?.role || "").toString();
+  const displayRole =
+    ["ad", "hc", "oc", "dc", "AD", "HC", "OC", "DC"].includes(rawRole)
+      ? rawRole.toUpperCase()
+      : "—";
 
   return (
     <div className="grid">
@@ -201,28 +193,27 @@ export default async function SettingsPage(props: {
         {msg ? <p className="success">{msg}</p> : null}
         {err ? <p className="error">{err}</p> : null}
 
-        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+        <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
           <Link className="btn secondary" href={`/league/${params.leagueId}`}>
             Back to League
-          </Link>
-          <Link className="btn secondary" href={`/league/${params.leagueId}/roster`}>
-            Roster
           </Link>
           <Link className="btn secondary" href={`/league/${params.leagueId}/teams`}>
             Teams
           </Link>
-        </div>
-      </div>
-
-      <div className="card col12">
-        <div className="h2">Invite</div>
-        <p className="muted">Share this code so friends can join your league:</p>
-        <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <div className="pill" style={{ fontFamily: "monospace" }}>
-            {league.invite_code}
-          </div>
-          <Link className="btn secondary" href={`/league/join`}>
-            Join by Code
+          <Link className="btn secondary" href={`/league/${params.leagueId}/schedule`}>
+            Schedule
+          </Link>
+          <Link className="btn secondary" href={`/league/${params.leagueId}/recruiting`}>
+            Recruiting
+          </Link>
+          <Link className="btn secondary" href={`/league/${params.leagueId}/portal`}>
+            Portal
+          </Link>
+          <Link className="btn secondary" href={`/league/${params.leagueId}/nil`}>
+            NIL
+          </Link>
+          <Link className="btn secondary" href={`/league/${params.leagueId}/coaches`}>
+            Coaches
           </Link>
         </div>
       </div>
@@ -230,9 +221,8 @@ export default async function SettingsPage(props: {
       <div className="card col12">
         <div className="h2">Team & Role</div>
         <p className="muted">
-          Your current assignment:{" "}
-          <strong>{currentTeam ? currentTeam.name : "—"}</strong> ·{" "}
-          <strong>{currentRole}</strong>
+          Current: <strong>{currentTeam ? currentTeam.name : "—"}</strong> · Role:{" "}
+          <strong>{displayRole}</strong>
         </p>
 
         <form action={setTeamRoleAction} className="grid" style={{ gap: 12, marginTop: 12 }}>
@@ -242,31 +232,32 @@ export default async function SettingsPage(props: {
             <label className="label">Team</label>
             <select className="input" name="teamId" defaultValue={myMembership?.team_id ?? ""}>
               <option value="">— Choose team —</option>
-              {(teams || []).map((t: any) => {
-                const conf = t.conference_name || t.conference || "";
-                const taken = takenByTeamRole.get(String(t.id)) || new Set<string>();
-                const suffix =
-                  taken.size > 0
-                    ? ` (taken: ${Array.from(taken).map((x) => x.toUpperCase()).join(", ")})`
-                    : "";
-                return (
-                  <option key={t.id} value={t.id}>
-                    {(conf ? `${conf} — ` : "") + t.name + suffix}
-                  </option>
-                );
-              })}
+              {(teams || []).map((t: any) => (
+                <option key={t.id} value={t.id}>
+                  {(t.conference ? `${t.conference} — ` : "") + t.name}
+                </option>
+              ))}
             </select>
           </div>
 
           <div className="col12">
             <label className="label">Role</label>
-            <select className="input" name="role" defaultValue={defaultRole}>
+            <select
+              className="input"
+              name="role"
+              defaultValue={normalizeRole(rawRole) || "hc"}
+            >
               {ROLES.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
                 </option>
               ))}
             </select>
+            <p className="muted" style={{ marginTop: 6 }}>
+              If you still see “Invalid role”, it is coming from the database function
+              <code style={{ marginLeft: 6 }}>set_team_role</code> validation rules, not this UI.
+              This page already retries both lowercase and uppercase.
+            </p>
           </div>
 
           <div className="col12 row" style={{ gap: 8 }}>
@@ -274,52 +265,68 @@ export default async function SettingsPage(props: {
               Save Team & Role
             </button>
           </div>
-
-          <p className="muted" style={{ marginTop: 6 }}>
-            Accepted roles: ad, hc, oc, dc. If you still see “Invalid role”, your DB RPC is still not the canonical one.
-          </p>
         </form>
       </div>
 
       <div className="card col12">
-        <div className="h2">League admin</div>
-        {!isCommissioner ? (
-          <p className="muted">Only the commissioner can advance weeks or delete the league.</p>
-        ) : (
-          <div className="grid" style={{ gap: 14 }}>
-            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-              <form action={advanceWeekAction}>
-                <input type="hidden" name="leagueId" value={params.leagueId} />
-                <button className="btn" type="submit">
-                  Advance Week
-                </button>
-              </form>
-            </div>
+        <div className="h2">League Admin</div>
+        <p className="muted">
+          Commissioner tools. If you are not the commissioner, these will be blocked by your database logic.
+        </p>
 
-            <div className="card" style={{ borderStyle: "dashed" }}>
-              <div className="h3">Delete league (danger)</div>
-              <p className="muted">
-                This cannot be undone. Type <strong>DELETE</strong> and click the button.
-              </p>
-              <form action={deleteLeagueAction} className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <input type="hidden" name="leagueId" value={params.leagueId} />
-                <input className="input" name="confirm" placeholder='Type "DELETE"' />
-                <button className="btn danger" type="submit">
-                  Delete League
-                </button>
-              </form>
-            </div>
+        <div className="grid" style={{ gap: 12, marginTop: 12 }}>
+          <div className="col12">
+            <form action={advanceWeekAction} className="row" style={{ gap: 10, alignItems: "center" }}>
+              <input type="hidden" name="leagueId" value={params.leagueId} />
+              <button className="btn" type="submit" disabled={!isCommissioner}>
+                Advance Week
+              </button>
+              {!isCommissioner ? (
+                <span className="muted">Only the commissioner can advance weeks.</span>
+              ) : (
+                <span className="muted">Simulates current week games and generates next week schedule.</span>
+              )}
+            </form>
           </div>
-        )}
+
+          <div className="col12">
+            <div className="h3" style={{ marginTop: 6 }}>
+              Delete League (danger)
+            </div>
+            <p className="muted">
+              This cannot be undone. Type <strong>DELETE</strong> and submit.
+            </p>
+
+            <form action={deleteLeagueAction} className="row" style={{ gap: 10, alignItems: "center" }}>
+              <input type="hidden" name="leagueId" value={params.leagueId} />
+              <input
+                className="input"
+                name="confirm"
+                placeholder="Type DELETE"
+                style={{ maxWidth: 220 }}
+              />
+              <button className="btn danger" type="submit" disabled={!isCommissioner}>
+                Delete League
+              </button>
+              {!isCommissioner ? (
+                <span className="muted">Only the commissioner can delete the league.</span>
+              ) : null}
+            </form>
+          </div>
+        </div>
       </div>
 
       <div className="card col12">
-        <div className="h2">Roadmap toggles (coming soon)</div>
+        <div className="h2">Notes</div>
         <ul className="muted">
-          <li>Recruiting board + weekly points</li>
-          <li>Transfer portal + NIL offers</li>
-          <li>Coach objectives + hot seat meter</li>
-          <li>AI-generated news stories</li>
+          <li>
+            The Vercel error you posted was caused by passing event handlers (like{" "}
+            <code>onSubmit</code>) across Server/Client component boundaries. This page avoids that entirely.
+          </li>
+          <li>
+            “Invalid role” is almost certainly coming from your Postgres RPC validation. This page already
+            normalizes the role and retries uppercase, which covers the most common mismatch.
+          </li>
         </ul>
       </div>
     </div>
