@@ -18,7 +18,10 @@ async function setTeamRoleAction(formData: FormData) {
 
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
-  const role = String(formData.get("role") || "").trim();
+  const role = String(formData.get("role") || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z]/g, "");
 
   if (!leagueId) redirect(`/`);
   if (!teamId) redirect(`/league/${leagueId}/team-role?err=${enc("Pick a team.")}`);
@@ -43,7 +46,7 @@ export default async function TeamRolePage({
   params,
   searchParams
 }: {
-  params: { leagueId: string };
+  params: { leagueId:  };
   searchParams?: { err?: string; msg?: string };
 }) {
   const supabase = supabaseServer();
