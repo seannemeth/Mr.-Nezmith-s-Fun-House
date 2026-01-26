@@ -1,27 +1,13 @@
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+// middleware.ts
+import { NextResponse, type NextRequest } from "next/server";
 
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // In Server Components, set can throw. Middleware handles refresh.
-          }
-        },
-      },
-    }
-  );
+export function middleware(req: NextRequest) {
+  // If you’re not doing auth refresh yet, keep it minimal.
+  return NextResponse.next();
 }
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|favicon.png|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};
