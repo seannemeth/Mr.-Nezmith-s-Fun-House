@@ -1,9 +1,32 @@
 // middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
-export function middleware(req: NextRequest) {
-  // If you’re not doing auth refresh yet, keep it minimal.
-  return NextResponse.next();
+export async function middleware(req: NextRequest) {
+  let res = NextResponse.next();
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return res;
+
+  const supabase = createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        return req.cookies.get(name)?.value;
+      },
+      set(name: string, value: string, options: any) {
+        res.cookies.set({ name, value, ...options });
+      },
+      remove(name: string, options: any) {
+        res.cookies.set({ name, value: "", ...options, maxAge: 0 });
+      },
+    },
+  });
+
+  // triggers refresh when needed and writes cookies to `res`
+  await supabase.auth.getUser();
+
+  return res;
 }
 
 export const config = {
