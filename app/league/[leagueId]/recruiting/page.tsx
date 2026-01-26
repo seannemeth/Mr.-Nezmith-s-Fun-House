@@ -1,420 +1,229 @@
-import Link from "next/link";
+// app/league/[leagueId]/recruiting/page.tsx
 import { redirect } from "next/navigation";
 import { supabaseServer } from "../../../../lib/supabaseServer";
-import {
-  offerScholarshipAction,
-  withdrawScholarshipAction,
-  scheduleRecruitVisitAction
-} from "../../../actions";
 
-function enc(s: string) {
-  return encodeURIComponent(s ?? "");
-}
-
-const POSITIONS = ["QB","RB","WR","TE","OL","DL","LB","CB","S","K","P"] as const;
+type RecruitRow = {
+  id: string;
+  name: string;
+  pos: string;
+  stars: number;
+  rank: number;
+  state: string | null;
+  archetype: string | null;
+  ovr: number;
+  top8: any[]; // jsonb
+  offer: any | null;
+  visit: any | null;
+};
 
 export default async function RecruitingPage({
   params,
-  searchParams
+  searchParams,
 }: {
   params: { leagueId: string };
-  searchParams?: {
-    msg?: string;
-    err?: string;
-    pos?: string;
-    state?: string;
-    stars?: string;
-    archetype?: string;
-    qmin?: string;
-    qmax?: string;
-    q?: string;
-  };
+  searchParams?: { page?: string };
 }) {
+  const leagueId = params.leagueId;
+
   const supabase = supabaseServer();
 
-  const msg = searchParams?.msg ? decodeURIComponent(searchParams.msg) : "";
-  const err = searchParams?.err ? decodeURIComponent(searchParams.err) : "";
-
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    redirect(`/login?err=${enc("Please sign in first.")}`);
+  // Require auth
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr) {
+    // If something is wrong with auth, send to login rather than crashing
+    redirect("/login");
   }
+  const userId = userData?.user?.id;
+  if (!userId) redirect("/login");
 
-  const { data: league, error: leagueErr } = await supabase
-    .from("leagues")
-    .select("id,name,current_season,current_week")
-    .eq("id", params.leagueId)
-    .single();
+  // Get membership for this league (to obtain team_id + role)
+  const { data: membership, error: membershipErr } = await supabase
+    .from("memberships")
+    .select("team_id, role")
+    .eq("league_id", leagueId)
+    .eq("user_id", userId)
+    .maybeSingle();
 
-  if (leagueErr || !league) {
+  if (membershipErr) {
     return (
-      <div className="card">
-        <div className="h1">Recruiting</div>
-        <p className="error">Could not load league.</p>
-        <p className="muted">{leagueErr?.message}</p>
-      </div>
+      <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Recruiting</h1>
+        <p style={{ color: "#b00020" }}>
+          Membership lookup failed: {membershipErr.message}
+        </p>
+      </main>
     );
   }
 
-  // Must have a team assignment to use recruiting
-  const { data: myMembership } = await supabase
-    .from("memberships")
-    .select("team_id,role")
-    .eq("league_id", params.leagueId)
-    .eq("user_id", userData.user.id)
-    .maybeSingle();
-
-  if (!myMembership?.team_id) {
-    redirect(`/league/${params.leagueId}/team-role?err=${enc("Pick a team and role to use Recruiting.")}`);
+  const teamId = membership?.team_id ?? null;
+  if (!teamId) {
+    // User is in league but hasn't selected a team/role properly
+    redirect(`/league/${leagueId}/team-role`);
   }
 
-  const teamId = myMembership.team_id;
-  const season = league.current_season ?? 1;
+  // Pagination (optional): ?page=0,1,2...
+  const page = Math.max(0, Number(searchParams?.page ?? "0") || 0);
+  const limit = 250;
+  const offset = page * limit;
 
-  const { data: team } = await supabase
-    .from("teams")
-    .select("id,name,conference_name,conference,prestige")
-    .eq("id", teamId)
-    .single();
-
-  // Pipelines (v2: state + level)
-  const { data: pipelines } = await supabase
-    .from("team_pipelines")
-    .select("state,level")
-    .eq("league_id", params.leagueId)
-    .eq("team_id", teamId)
-    .order("level", { ascending: false })
-    .order("state", { ascending: true });
-
-  // Visits (this season)
-  const { data: visits } = await supabase
-    .from("recruit_visits")
-    .select("recruit_id,week,visit_type")
-    .eq("league_id", params.leagueId)
-    .eq("team_id", teamId)
-    .eq("season", season);
-
-  const visitByRecruit = new Map<string, { week: number; visit_type: string }>();
-  (visits || []).forEach((v: any) =>
-    visitByRecruit.set(String(v.recruit_id), { week: Number(v.week), visit_type: String(v.visit_type || "official") })
-  );
-
-  // Filters
-  const pos = (searchParams?.pos || "").trim().toUpperCase();
-  const state = (searchParams?.state || "").trim().toUpperCase();
-  const stars = (searchParams?.stars || "").trim();
-  const archetype = (searchParams?.archetype || "").trim();
-  const q = (searchParams?.q || "").trim();
-  const qmin = Number((searchParams?.qmin || "").trim() || "");
-  const qmax = Number((searchParams?.qmax || "").trim() || "");
-
-  // Recruiting v2: fetch recruit list with Top-8 + Offer fields via RPC
-  const { data: recruitList, error: recruitsErr } = await supabase.rpc("get_recruit_list_v1", {
-    p_league_id: params.leagueId,
+  // Call the RPC that we already proved works in production
+  const { data, error: rpcErr } = await supabase.rpc("get_recruit_list_v1", {
+    p_league_id: leagueId,
+    p_limit: limit,
+    p_offset: offset,
+    p_only_uncommitted: true,
+    // IMPORTANT: always pass a UUID or null; never undefined
     p_team_id: teamId,
-    p_limit: 200,
-    p_offset: 0,
-    p_only_uncommitted: true
   });
 
-  const recruits: any[] = (recruitList as any)?.rows || [];
-  const activeOffersCount: number = Number((recruitList as any)?.active_offers ?? 0);
-  const offerCap: number = Number((recruitList as any)?.cap ?? 35);
+  if (rpcErr) {
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Recruiting</h1>
+        <p style={{ color: "#b00020" }}>
+          RPC get_recruit_list_v1 failed: {rpcErr.message}
+        </p>
+        <pre style={{ whiteSpace: "pre-wrap", background: "#f6f6f6", padding: 12, borderRadius: 8 }}>
+          leagueId: {leagueId}
+          {"\n"}userId: {userId}
+          {"\n"}teamId: {teamId}
+          {"\n"}limit: {limit}
+          {"\n"}offset: {offset}
+        </pre>
+      </main>
+    );
+  }
 
-  // Client-side filtering (RPC keeps the server logic simple)
-  const filteredRecruits = (recruits || []).filter((r: any) => {
-    const rPos = String(r.pos || r.position || "").toUpperCase();
-    const rState = String(r.state || "").toUpperCase();
-    const rStars = Number(r.stars || 0);
-    const rArch = String(r.archetype || "");
-    const rOvr = Number(r.ovr ?? r.quality ?? 0);
-    const rName = String(r.name || "");
-
-    if (pos && POSITIONS.includes(pos as any) && rPos !== pos) return false;
-    if (state && state.length === 2 && rState !== state) return false;
-    if (stars && rStars !== Number(stars)) return false;
-    if (archetype && !rArch.toLowerCase().includes(archetype.toLowerCase())) return false;
-    if (Number.isFinite(qmin) && qmin > 0 && rOvr < qmin) return false;
-    if (Number.isFinite(qmax) && qmax > 0 && rOvr > qmax) return false;
-    if (q && !rName.toLowerCase().includes(q.toLowerCase())) return false;
-    return true;
-  });
-
-  // My offers table: fetch ALL active offers for this team/season (not just the first 200 recruits)
-  const { data: myOfferRows } = await supabase
-    .from("recruiting_offers")
-    .select("recruit_id,points")
-    .eq("league_id", params.leagueId)
-    .eq("season", season)
-    .eq("team_id", teamId)
-    .eq("is_active", true)
-    .order("points", { ascending: false })
-    .limit(300);
-
-  const myOfferIds = (myOfferRows || []).map((o: any) => String(o.recruit_id));
-  const { data: myOfferRecruits } = myOfferIds.length
-    ? await supabase
-        .from("recruits")
-        .select("id,name,position,stars,state,archetype,quality,rank")
-        .in("id", myOfferIds)
-    : { data: [] as any[] };
-
-  const recruitById = new Map<string, any>();
-  (myOfferRecruits || []).forEach((r: any) => recruitById.set(String(r.id), r));
+  const recruits: RecruitRow[] = Array.isArray(data) ? (data as RecruitRow[]) : [];
 
   return (
-    <div className="grid">
-      <div className="card col12">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div className="h1">Recruiting — {league.name}</div>
-            <p className="muted" style={{ marginTop: 6 }}>
-              Team: <strong>{team?.name}</strong>
-              {" · "}
-              Season: <strong>{season}</strong>
-              {" · "}
-              Week: <strong>{league.current_week}</strong>
-            </p>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <Link className="btn secondary" href={`/league/${params.leagueId}`}>Back</Link>
+    <main style={{ padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+      <header style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, marginBottom: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, margin: 0 }}>Recruiting</h1>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>
+            League: <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{leagueId}</span>
+            {" • "}
+            Team: <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{teamId}</span>
+            {" • "}
+            Loaded: {recruits.length} (page {page + 1})
           </div>
         </div>
 
-        {msg ? <p className="success">{msg}</p> : null}
-        {err ? <p className="error">{err}</p> : null}
-      </div>
+        <nav style={{ display: "flex", gap: 10 }}>
+          <a
+            href={`/league/${leagueId}/recruiting?page=${Math.max(0, page - 1)}`}
+            style={{
+              pointerEvents: page === 0 ? "none" : "auto",
+              opacity: page === 0 ? 0.4 : 1,
+              textDecoration: "none",
+              border: "1px solid #ddd",
+              padding: "8px 10px",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "inherit",
+            }}
+          >
+            Prev
+          </a>
+          <a
+            href={`/league/${leagueId}/recruiting?page=${page + 1}`}
+            style={{
+              textDecoration: "none",
+              border: "1px solid #ddd",
+              padding: "8px 10px",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "inherit",
+            }}
+          >
+            Next
+          </a>
+        </nav>
+      </header>
 
-      <div className="card col12">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div className="h2">Your recruiting state</div>
-            <p className="muted" style={{ marginTop: 6 }}>
-              My Offers (Active <strong>{activeOffersCount}</strong>/{offerCap})
-            </p>
-            <p className="muted" style={{ marginTop: 6 }}>
-              Pipelines:{" "}
-              {(pipelines || []).length
-                ? (pipelines || [])
-                    .map((p: any) => `${p.state} (Lv ${p.level})`)
-                    .join(" · ")
-                : "Not set yet (optional v1)."}
-            </p>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <Link className="btn secondary" href={`/league/${params.leagueId}/team-role`}>
-              Team & Role
-            </Link>
+      {recruits.length === 0 ? (
+        <div style={{ padding: 16, border: "1px solid #eee", borderRadius: 10 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>No recruits returned.</div>
+          <div style={{ fontSize: 13, opacity: 0.8 }}>
+            This indicates the page query returned an empty list. Since your diagnostic proves recruits exist and the RPC works,
+            this would typically mean the wrong leagueId/teamId is being used, or a different page is still deployed.
           </div>
         </div>
-      </div>
-
-      <div className="card col12">
-        <div className="h2">Filters</div>
-        <form method="get" className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <select className="input" name="pos" defaultValue={pos}>
-            <option value="">Pos (All)</option>
-            {POSITIONS.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-
-          <input className="input" name="state" placeholder="State (e.g., PA)" defaultValue={state} style={{ width: 140 }} />
-
-          <select className="input" name="stars" defaultValue={stars} style={{ width: 160 }}>
-            <option value="">Stars (All)</option>
-            <option value="5">5★</option>
-            <option value="4">4★</option>
-            <option value="3">3★</option>
-            <option value="2">2★</option>
-            <option value="1">1★</option>
-          </select>
-
-          <input className="input" name="archetype" placeholder="Archetype" defaultValue={archetype} style={{ width: 180 }} />
-          <input className="input" name="q" placeholder="Search name" defaultValue={q} style={{ width: 200 }} />
-
-          <input className="input" name="qmin" placeholder="OVR min" defaultValue={searchParams?.qmin || ""} style={{ width: 120 }} />
-          <input className="input" name="qmax" placeholder="OVR max" defaultValue={searchParams?.qmax || ""} style={{ width: 120 }} />
-
-          <button className="btn" type="submit">Apply</button>
-          <Link className="btn secondary" href={`/league/${params.leagueId}/recruiting`}>Reset</Link>
-        </form>
-
-        {recruitsErr ? (
-          <p className="error" style={{ marginTop: 10 }}>{recruitsErr.message}</p>
-        ) : (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Showing {filteredRecruits.length} recruit(s) (server sorted by Stars → OVR → Rank; filters applied client-side).
-          </p>
-        )}
-      </div>
-
-      <div className="card col12">
-        <div className="h2">Recruit List</div>
-
-        <table className="table" style={{ marginTop: 12 }}>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Pos</th>
-              <th>Stars</th>
-              <th>Rank</th>
-              <th>State</th>
-              <th>Archetype</th>
-              <th>OVR</th>
-              <th>Top-8</th>
-              <th>Offer</th>
-              <th>Visit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(filteredRecruits || []).map((r: any) => {
-              const rid = String(r.id);
-              const offer = r.offer;
-              const top8 = Array.isArray(r.top8) ? r.top8 : [];
-              const visit = visitByRecruit.get(rid);
-
-              const starsText = "★★★★★".slice(0, Math.max(1, Math.min(5, Number(r.stars || 1))));
-
-              return (
-                <tr key={rid}>
-                  <td>{r.name}</td>
-                  <td>{r.pos || r.position}</td>
-                  <td>{starsText}</td>
-                  <td>{r.rank ?? "—"}</td>
-                  <td>{r.state}</td>
-                  <td>{r.archetype}</td>
-                  <td>{r.ovr ?? r.quality}</td>
-
-                  <td>
-                    {top8.length ? (
-                      <div className="muted" style={{ maxWidth: 340 }}>
-                        {top8.map((t: any, i: number) => (
-                          <span key={`${rid}-${i}`}>
-                            {i ? " · " : ""}
-                            {t.team_name || t.team_id} ({t.points})
-                          </span>
-                        ))}
-                      </div>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#fafafa" }}>
+                <th style={th}>Rank</th>
+                <th style={th}>Name</th>
+                <th style={th}>Pos</th>
+                <th style={th}>Stars</th>
+                <th style={th}>OVR</th>
+                <th style={th}>State</th>
+                <th style={th}>Archetype</th>
+                <th style={th}>Offer</th>
+                <th style={th}>Visit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recruits.map((r) => (
+                <tr key={r.id}>
+                  <td style={tdMono}>{r.rank}</td>
+                  <td style={td}>
+                    <div style={{ fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.75, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                      {r.id}
+                    </div>
+                  </td>
+                  <td style={tdMono}>{r.pos}</td>
+                  <td style={tdMono}>{r.stars}</td>
+                  <td style={tdMono}>{r.ovr}</td>
+                  <td style={td}>{r.state ?? "-"}</td>
+                  <td style={td}>{r.archetype ?? "-"}</td>
+                  <td style={td}>
+                    {r.offer ? (
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                        {JSON.stringify(r.offer)}
+                      </span>
                     ) : (
-                      <span className="muted">—</span>
+                      "-"
                     )}
                   </td>
-
-                  <td>
-                    {offer?.is_active ? (
-                      <form action={withdrawScholarshipAction} className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <input type="hidden" name="leagueId" value={params.leagueId} />
-                        <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="recruitId" value={rid} />
-                        <span className="muted">Offered ({offer.points})</span>
-                        <button className="btn secondary" type="submit">Withdraw</button>
-                      </form>
+                  <td style={td}>
+                    {r.visit ? (
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                        {JSON.stringify(r.visit)}
+                      </span>
                     ) : (
-                      <form action={offerScholarshipAction} className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <input type="hidden" name="leagueId" value={params.leagueId} />
-                        <input type="hidden" name="teamId" value={teamId} />
-                        <input type="hidden" name="recruitId" value={rid} />
-                        <button className="btn" type="submit">Offer</button>
-                      </form>
+                      "-"
                     )}
                   </td>
-
-                  <td>
-                    <form action={scheduleRecruitVisitAction} className="row" style={{ gap: 8, alignItems: "center" }}>
-                      <input type="hidden" name="leagueId" value={params.leagueId} />
-                      <input type="hidden" name="teamId" value={teamId} />
-                      <input type="hidden" name="recruitId" value={rid} />
-                      <select className="input" name="week" defaultValue={visit ? String(visit.week) : "5"} style={{ width: 100 }}>
-                        {Array.from({ length: 20 }).map((_, i) => (
-                          <option key={i + 1} value={i + 1}>
-                            W{i + 1}
-                          </option>
-                        ))}
-                      </select>
-                      <select className="input" name="visitType" defaultValue={visit ? String(visit.visit_type) : "official"} style={{ width: 130 }}>
-                        <option value="official">Official</option>
-                        <option value="unofficial">Unofficial</option>
-                      </select>
-                      <button className="btn secondary" type="submit">
-                        {visit ? "Change" : "Set"}
-                      </button>
-                    </form>
-                  </td>
                 </tr>
-              );
-            })}
-
-            {(!filteredRecruits || filteredRecruits.length === 0) ? (
-              <tr>
-                <td colSpan={10} className="muted">
-                  No recruits found. If this is a brand-new league, confirm recruits were seeded for this league_id.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-
-        <p className="muted" style={{ marginTop: 10 }}>
-          Note: The 35-offer cap is enforced server-side in SQL. If you hit 35, the “Offer” action will return a clear error.
-        </p>
-      </div>
-
-      <div className="card col12">
-        <div className="h2">My Offers (Active {activeOffersCount}/{offerCap})</div>
-        <p className="muted" style={{ marginTop: 6 }}>
-          This list is pulled from <code>recruiting_offers</code> for your team (not limited to the first 200 recruits).
-        </p>
-
-        <table className="table" style={{ marginTop: 12 }}>
-          <thead>
-            <tr>
-              <th>Recruit</th>
-              <th>Pos</th>
-              <th>Stars</th>
-              <th>State</th>
-              <th>OVR</th>
-              <th>Points</th>
-              <th>Visit</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {(myOfferRows || []).map((o: any) => {
-              const rid = String(o.recruit_id);
-              const r = recruitById.get(rid);
-              const visit = visitByRecruit.get(rid);
-              const starsText = r ? "★★★★★".slice(0, Math.max(1, Math.min(5, Number(r.stars || 1)))) : "—";
-
-              return (
-                <tr key={rid}>
-                  <td>{r?.name || rid}</td>
-                  <td>{r?.position || "—"}</td>
-                  <td>{starsText}</td>
-                  <td>{r?.state || "—"}</td>
-                  <td>{r?.quality ?? "—"}</td>
-                  <td>{o.points ?? 0}</td>
-                  <td>{visit ? `W${visit.week} (${visit.visit_type})` : "—"}</td>
-                  <td>
-                    <form action={withdrawScholarshipAction}>
-                      <input type="hidden" name="leagueId" value={params.leagueId} />
-                      <input type="hidden" name="teamId" value={teamId} />
-                      <input type="hidden" name="recruitId" value={rid} />
-                      <button className="btn secondary" type="submit">Withdraw</button>
-                    </form>
-                  </td>
-                </tr>
-              );
-            })}
-
-            {(!myOfferRows || myOfferRows.length === 0) ? (
-              <tr>
-                <td colSpan={8} className="muted">No active offers yet.</td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-    </div>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </main>
   );
 }
+
+const th: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 12px",
+  borderBottom: "1px solid #eee",
+  whiteSpace: "nowrap",
+};
+
+const td: React.CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid #f0f0f0",
+  verticalAlign: "top",
+};
+
+const tdMono: React.CSSProperties = {
+  ...td,
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  whiteSpace: "nowrap",
+};
