@@ -1,40 +1,27 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export async function middleware(req: NextRequest) {
-  let res = NextResponse.next({ request: { headers: req.headers } });
+export function createSupabaseServerClient() {
+  const cookieStore = cookies();
 
-  const supabase = createServerClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         getAll() {
-          return req.cookies.getAll();
+          return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            res.cookies.set(name, value, options);
-          });
-        }
-      }
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // In Server Components, set can throw. Middleware handles refresh.
+          }
+        },
+      },
     }
   );
-
-  // This call refreshes the session cookie when needed
-  await supabase.auth.getUser();
-
-  return res;
 }
-
-export const config = {
-  matcher: [
-    /*
-      Match all request paths except for:
-      - _next/static (static files)
-      - _next/image (image optimization files)
-      - favicon.ico (favicon file)
-    */
-    "/((?!_next/static|_next/image|favicon.ico).*)"
-  ]
-};
