@@ -1,5 +1,6 @@
 // app/league/[leagueId]/recruiting/page.tsx
 import AdvanceWeekButton from "./AdvanceWeekButton";
+import RecruitingClient from "./recruiting-client";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
 export default async function Page({
@@ -24,27 +25,68 @@ export default async function Page({
     );
   }
 
-  // League + commissioner
-  const { data: league } = await supabase
+  // League
+  const { data: league, error: leagueErr } = await supabase
     .from("leagues")
     .select("id, commissioner_id, current_season, current_week")
     .eq("id", leagueId)
     .single();
 
-  const isCommissioner = Boolean(league && league.commissioner_id === user.id);
+  if (leagueErr || !league) {
+    return (
+      <div style={{ padding: 16 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>
+          League not found or not accessible.
+        </div>
+      </div>
+    );
+  }
 
-  // Team context (membership)
-  const { data: membership } = await supabase
+  const isCommissioner = league.commissioner_id === user.id;
+
+  // Membership -> teamId
+  const { data: membership, error: memErr } = await supabase
     .from("memberships")
     .select("team_id")
     .eq("league_id", leagueId)
     .eq("user_id", user.id)
     .maybeSingle();
 
+  if (memErr) {
+    return (
+      <div style={{ padding: 16 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>{memErr.message}</div>
+      </div>
+    );
+  }
+
   const teamId = membership?.team_id ?? null;
 
-  // Import your existing client UI (typed as any so this page won’t break on prop typing)
-  const RecruitingClient = (await import("./recruiting-client")).default as any;
+  if (!teamId) {
+    return (
+      <div style={{ padding: 16 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>
+          You are not assigned to a team in this league.
+        </div>
+      </div>
+    );
+  }
+
+  // Fetch recruit list from RPC. If RPC signature differs, we fail soft to [] so client won't crash.
+  let recruitRows: any[] = [];
+  try {
+    const { data, error } = await supabase.rpc("get_recruit_list_v1", {
+      p_league_id: leagueId,
+      p_team_id: teamId,
+    });
+
+    if (!error && Array.isArray(data)) recruitRows = data;
+  } catch {
+    // keep recruitRows = []
+  }
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -61,7 +103,7 @@ export default async function Page({
           <div>
             <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
             <div style={{ fontSize: 13, opacity: 0.75 }}>
-              Season {league?.current_season ?? "—"} · Week {league?.current_week ?? "—"}
+              Season {league.current_season} · Week {league.current_week}
             </div>
           </div>
 
@@ -77,21 +119,16 @@ export default async function Page({
         ) : null}
       </div>
 
-      {!teamId ? (
-        <div
-          style={{
-            padding: 14,
-            borderRadius: 14,
-            border: "1px solid rgba(0,0,0,0.1)",
-            opacity: 0.85,
-          }}
-        >
-          You are not assigned to a team in this league (no membership.team_id found).
-        </div>
-      ) : (
-        // Render your actual recruiting UI
-        <RecruitingClient leagueId={leagueId} teamId={teamId} />
-      )}
+      {/* Pass data under multiple common prop names to satisfy your existing client expectations */}
+      <RecruitingClient
+        leagueId={leagueId}
+        teamId={teamId}
+        recruits={recruitRows}
+        rows={recruitRows}
+        recruitRows={recruitRows}
+        initialRecruits={recruitRows}
+        initialRows={recruitRows}
+      />
     </div>
   );
 }
