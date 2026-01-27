@@ -1,20 +1,7 @@
-// app/league/[leagueId]/recruiting/actions.ts
-"use server";
+export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
+  if (!leagueId) return { ok: false, message: "Missing leagueId." };
 
-import { revalidatePath } from "next/cache";
-import { supabaseServer } from "../../../../lib/supabaseServer";
-
-type ActionResult =
-  | { ok: true; message: string; data?: any }
-  | { ok: false; message: string; data?: any };
-
-type OfferArgs = {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-};
-
-async function getAuthedLeague(leagueId: string) {
+  // 1) Use cookie-bound client to authenticate the caller
   const supabase = supabaseServer();
 
   const {
@@ -22,8 +9,8 @@ async function getAuthedLeague(leagueId: string) {
     error: userErr,
   } = await supabase.auth.getUser();
 
-  if (userErr) return { ok: false as const, message: userErr.message };
-  if (!user) return { ok: false as const, message: "Not signed in." };
+  if (userErr) return { ok: false, message: userErr.message };
+  if (!user) return { ok: false, message: "Not authenticated" };
 
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
@@ -31,86 +18,31 @@ async function getAuthedLeague(leagueId: string) {
     .eq("id", leagueId)
     .single();
 
-  if (leagueErr) return { ok: false as const, message: leagueErr.message };
-  if (!league) return { ok: false as const, message: "League not found." };
-
-  return { ok: true as const, supabase, user, league };
-}
-
-/**
- * recruiting-client.tsx expects:
- *   await makeOfferAction({ leagueId, teamId, recruitId })
- */
-export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase, league } = ctx;
-
-  // Insert offer (season REQUIRED; do NOT include non-existent columns like created_by)
-  const { error: insErr } = await supabase.from("recruiting_offers").insert({
-    league_id: leagueId,
-    team_id: teamId,
-    recruit_id: recruitId,
-    season: league.current_season,
-  });
-
-  if (insErr) return { ok: false, message: insErr.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer made." };
-}
-
-/**
- * recruiting-client.tsx expects:
- *   await removeOfferAction({ leagueId, teamId, recruitId })
- */
-export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase, league } = ctx;
-
-  const { error: delErr } = await supabase
-    .from("recruiting_offers")
-    .delete()
-    .eq("league_id", leagueId)
-    .eq("team_id", teamId)
-    .eq("recruit_id", recruitId)
-    .eq("season", league.current_season);
-
-  if (delErr) return { ok: false, message: delErr.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer removed." };
-}
-
-/**
- * Advance recruiting week (commissioner only).
- */
-export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase, user, league } = ctx;
+  if (leagueErr) return { ok: false, message: leagueErr.message };
+  if (!league) return { ok: false, message: "League not found." };
 
   if (league.commissioner_id !== user.id) {
     return { ok: false, message: "Only the commissioner can advance the week." };
   }
 
-  const { data: summary, error: rpcErr } = await supabase.rpc(
+  // 2) Run the weekly processor using a service-role client (bypasses RLS/JWT issues)
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!service) {
+    return {
+      ok: false,
+      message:
+        "Missing SUPABASE_SERVICE_ROLE_KEY env var. Add it in Vercel + locally.",
+    };
+  }
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const admin = createClient(url, service, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { data: summary, error: rpcErr } = await admin.rpc(
     "process_recruiting_week_v1",
     { p_league_id: leagueId }
   );
