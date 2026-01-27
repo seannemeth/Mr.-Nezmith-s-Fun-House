@@ -43,12 +43,21 @@ export default async function Page({
 
   const isCommissioner = league.commissioner_id === user.id;
 
-  const { data: membership } = await supabase
+  const { data: membership, error: memErr } = await supabase
     .from("memberships")
     .select("team_id")
     .eq("league_id", leagueId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (memErr) {
+    return (
+      <div style={{ padding: 16 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>{memErr.message}</div>
+      </div>
+    );
+  }
 
   const teamId = membership?.team_id ?? null;
 
@@ -63,8 +72,10 @@ export default async function Page({
     );
   }
 
-  // Server-fetch recruits (safe fallback to [])
+  // Server-fetch recruits + capture RPC error
   let recruits: any[] = [];
+  let rpcErrorMsg: string | null = null;
+
   const { data: recruitData, error: recruitErr } = await supabase.rpc(
     "get_recruit_list_v1",
     {
@@ -73,6 +84,7 @@ export default async function Page({
     }
   );
 
+  if (recruitErr) rpcErrorMsg = recruitErr.message;
   if (!recruitErr && Array.isArray(recruitData)) recruits = recruitData;
 
   return (
@@ -106,7 +118,12 @@ export default async function Page({
         ) : null}
       </div>
 
-      <RecruitingClient leagueId={leagueId} teamId={teamId} recruits={recruits} />
+      <RecruitingClient
+        leagueId={leagueId}
+        teamId={teamId}
+        recruits={recruits}
+        rpcError={rpcErrorMsg}
+      />
     </div>
   );
 }
