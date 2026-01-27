@@ -14,7 +14,10 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
 
-  const label = useMemo(() => (isPending ? "Advancing…" : "Advance Week"), [isPending]);
+  const label = useMemo(
+    () => (isPending ? "Advancing…" : "Advance Week"),
+    [isPending]
+  );
 
   const onClick = () => {
     setStatus(null);
@@ -22,10 +25,7 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
 
     startTransition(async () => {
       const res = await advanceRecruitingWeek(leagueId);
-      if (!res.ok) {
-        setStatus(`❌ ${res.message}`);
-        return;
-      }
+      if (!res.ok) return setStatus(`❌ ${res.message}`);
       setStatus(`✅ ${res.message}`);
       setSummary(res.summary ?? null);
     });
@@ -42,7 +42,7 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
           padding: "10px 14px",
           borderRadius: 10,
           border: "1px solid rgba(0,0,0,0.15)",
-          fontWeight: 700,
+          fontWeight: 800,
           cursor: Boolean(disabled) || isPending ? "not-allowed" : "pointer",
         }}
       >
@@ -63,7 +63,7 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
               marginTop: 8,
               padding: 10,
               borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.10)",
+              border: "1px solid rgba(0,0,0,0.1)",
               overflowX: "auto",
             }}
           >
