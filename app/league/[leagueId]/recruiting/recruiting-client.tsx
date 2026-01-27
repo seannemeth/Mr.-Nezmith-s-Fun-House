@@ -141,8 +141,8 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
         ? await removeOfferAction({ leagueId, teamId, recruitId: recruit.id })
         : await makeOfferAction({ leagueId, teamId, recruitId: recruit.id });
 
-      if (!res?.ok) {
-        setToast({ type: "err", msg: res?.message ?? "Offer action failed." });
+      if (!res.ok) {
+        setToast({ type: "err", msg: res.message });
         return;
       }
 
