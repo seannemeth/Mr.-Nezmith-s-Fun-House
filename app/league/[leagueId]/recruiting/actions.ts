@@ -1,139 +1,188 @@
+// app/league/[leagueId]/recruiting/actions.ts
 "use server";
 
-import { redirect } from "next/navigation";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
-function enc(s: string) {
-  return encodeURIComponent(s);
+type TryResult = { ok: true } | { ok: false; message: string };
+
+function errMsg(e: any) {
+  return e?.message ?? e?.error_description ?? String(e);
 }
 
-export async function addToBoardAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  const slot = Number(String(formData.get("slot") || "").trim());
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Team & Role).")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit.")}`);
-  if (!slot || slot < 1 || slot > 8) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a slot 1-8.")}`);
-
+/**
+ * Tries multiple payload shapes to tolerate schema differences.
+ * Returns first success; otherwise returns the last error.
+ */
+async function tryUpsert(
+  table: string,
+  payloadVariants: Record<string, any>[],
+  conflictTargetsVariants: string[][]
+): Promise<TryResult> {
   const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  const { error } = await supabase.rpc("add_to_board", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-    p_slot: slot
-  });
+  let lastError: any = null;
 
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
+  for (let i = 0; i < payloadVariants.length; i++) {
+    const payload = payloadVariants[i];
 
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Added to Top-8.")}`);
+    // Try each conflict target set for this payload
+    for (let j = 0; j < conflictTargetsVariants.length; j++) {
+      const onConflict = conflictTargetsVariants[j].join(",");
+
+      const { error } = await supabase
+        .from(table)
+        .upsert(payload, { onConflict });
+
+      if (!error) return { ok: true };
+      lastError = error;
+    }
+
+    // Also try plain insert (some schemas don't allow upsert or have no unique index)
+    const { error: insertErr } = await supabase.from(table).insert(payload);
+    if (!insertErr) return { ok: true };
+    lastError = insertErr;
+  }
+
+  return { ok: false, message: errMsg(lastError) };
 }
 
-export async function removeFromBoardAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Team & Role).")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit.")}`);
-
+async function tryDelete(
+  table: string,
+  whereVariants: Record<string, any>[]
+): Promise<TryResult> {
   const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+  let lastError: any = null;
 
-  const { error } = await supabase.rpc("remove_from_board", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId
-  });
+  for (const where of whereVariants) {
+    let q: any = supabase.from(table).delete();
+    Object.entries(where).forEach(([k, v]) => (q = q.eq(k, v)));
+    const { error } = await q;
+    if (!error) return { ok: true };
+    lastError = error;
+  }
 
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Removed.")}`);
+  return { ok: false, message: errMsg(lastError) };
 }
 
-export async function setPipelineAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const state = String(formData.get("state") || "").trim();
-  const bonus = Number(String(formData.get("bonus") || "5").trim() || "5");
+/**
+ * Offer: create/update the row linking (league, team, recruit)
+ * amount is optional; you can later map to points/NIL/etc.
+ */
+export async function makeOfferAction(args: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+  amount?: number | null;
+}) {
+  const { leagueId, teamId, recruitId, amount } = args;
 
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Team & Role).")}`);
-  if (!state) redirect(`/league/${leagueId}/recruiting?err=${enc("State is required.")}`);
+  // Common payload shapes we might have in different schema versions
+  const payloads: Record<string, any>[] = [
+    // Variant A: league_id/team_id/recruit_id + amount
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, amount: amount ?? null },
 
-  const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+    // Variant B: league_id/team_id/recruit_id + offer_amount
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, offer_amount: amount ?? null },
 
-  const { error } = await supabase.rpc("set_pipeline_state", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_state: state,
-    p_bonus: bonus
-  });
+    // Variant C: league_id/team_id/recruit_id + points
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, points: amount ?? null },
 
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
+    // Variant D: some older schemas use committed_team_id or recruit_uuid (rare but seen)
+    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId, amount: amount ?? null },
+  ];
 
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Pipeline saved.")}`);
+  // Common unique keys for upsert (depends on your indexes)
+  const conflictTargets: string[][] = [
+    ["league_id", "team_id", "recruit_id"],
+    ["league_id", "recruit_id", "team_id"],
+    ["team_id", "recruit_id"],
+    ["league_id", "team_id", "recruit_uuid"],
+  ];
+
+  const res = await tryUpsert("recruiting_offers", payloads, conflictTargets);
+
+  if (!res.ok) {
+    throw new Error(`makeOfferAction failed: ${res.message}`);
+  }
+
+  return { ok: true };
 }
 
-export async function removePipelineAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const state = String(formData.get("state") || "").trim();
+export async function removeOfferAction(args: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+}) {
+  const { leagueId, teamId, recruitId } = args;
 
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Team & Role).")}`);
-  if (!state) redirect(`/league/${leagueId}/recruiting?err=${enc("State is required.")}`);
+  const whereVariants: Record<string, any>[] = [
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId },
+    { team_id: teamId, recruit_id: recruitId },
+    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId },
+  ];
 
-  const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+  const res = await tryDelete("recruiting_offers", whereVariants);
 
-  const { error } = await supabase.rpc("remove_pipeline_state", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_state: state
-  });
+  if (!res.ok) {
+    throw new Error(`removeOfferAction failed: ${res.message}`);
+  }
 
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
-
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Pipeline removed.")}`);
+  return { ok: true };
 }
 
-export async function scheduleVisitAction(formData: FormData) {
-  const leagueId = String(formData.get("leagueId") || "").trim();
-  const teamId = String(formData.get("teamId") || "").trim();
-  const recruitId = String(formData.get("recruitId") || "").trim();
-  const week = Number(String(formData.get("week") || "").trim());
-  const visitType = String(formData.get("visitType") || "").trim();
+/**
+ * Visit: schedule a visit week (number) or date string (optional)
+ * You can later expand to "week", "type", "bonus", etc.
+ */
+export async function scheduleVisitAction(args: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+  week?: number | null; // e.g., 1..15
+  visitDate?: string | null; // ISO string if you prefer
+}) {
+  const { leagueId, teamId, recruitId, week, visitDate } = args;
 
-  if (!leagueId) redirect(`/`);
-  if (!teamId) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a team first (Team & Role).")}`);
-  if (!recruitId) redirect(`/league/${leagueId}/recruiting?err=${enc("Missing recruit.")}`);
-  if (!week) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a week.")}`);
-  if (!visitType) redirect(`/league/${leagueId}/recruiting?err=${enc("Pick a visit type.")}`);
+  const payloads: Record<string, any>[] = [
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week: week ?? null, visit_date: visitDate ?? null },
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, visit_week: week ?? null, visit_date: visitDate ?? null },
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week_number: week ?? null, date: visitDate ?? null },
+    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId, week: week ?? null, visit_date: visitDate ?? null },
+  ];
 
-  const supabase = supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect(`/login?err=${enc("Please sign in first.")}`);
+  const conflictTargets: string[][] = [
+    ["league_id", "team_id", "recruit_id"],
+    ["team_id", "recruit_id"],
+    ["league_id", "team_id", "recruit_uuid"],
+  ];
 
-  const { error } = await supabase.rpc("schedule_visit", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-    p_week: week,
-    p_visit_type: visitType
-  });
+  const res = await tryUpsert("recruit_visits", payloads, conflictTargets);
 
-  if (error) redirect(`/league/${leagueId}/recruiting?err=${enc(error.message)}`);
+  if (!res.ok) {
+    throw new Error(`scheduleVisitAction failed: ${res.message}`);
+  }
 
-  redirect(`/league/${leagueId}/recruiting?msg=${enc("Visit scheduled.")}`);
+  return { ok: true };
+}
+
+export async function cancelVisitAction(args: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+}) {
+  const { leagueId, teamId, recruitId } = args;
+
+  const whereVariants: Record<string, any>[] = [
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId },
+    { team_id: teamId, recruit_id: recruitId },
+    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId },
+  ];
+
+  const res = await tryDelete("recruit_visits", whereVariants);
+
+  if (!res.ok) {
+    throw new Error(`cancelVisitAction failed: ${res.message}`);
+  }
+
+  return { ok: true };
 }
