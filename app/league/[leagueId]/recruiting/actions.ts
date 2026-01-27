@@ -1,188 +1,183 @@
-// app/league/[leagueId]/recruiting/actions.ts
 "use server";
 
+// app/league/[leagueId]/recruiting/actions.ts
+import { revalidatePath } from "next/cache";
 import { supabaseServer } from "../../../../lib/supabaseServer";
 
-type TryResult = { ok: true } | { ok: false; message: string };
+type TryOk = { ok: true };
+type TryFail = { ok: false; message: string };
+export type TryResult = TryOk | TryFail;
 
-function errMsg(e: any) {
-  return e?.message ?? e?.error_description ?? String(e);
+function fail(message: string): TryFail {
+  return { ok: false, message };
 }
 
-/**
- * Tries multiple payload shapes to tolerate schema differences.
- * Returns first success; otherwise returns the last error.
- */
-async function tryUpsert(
-  table: string,
-  payloadVariants: Record<string, any>[],
-  conflictTargetsVariants: string[][]
-): Promise<TryResult> {
+async function requireAuthAndTeam(leagueId: string) {
   const supabase = supabaseServer();
 
-  let lastError: any = null;
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr) return { supabase: null as any, userId: null as any, teamId: null as any, error: userErr.message };
+  const userId = userData?.user?.id;
+  if (!userId) return { supabase: null as any, userId: null as any, teamId: null as any, error: "Not signed in" };
 
-  for (let i = 0; i < payloadVariants.length; i++) {
-    const payload = payloadVariants[i];
+  const { data: membership, error: membershipErr } = await supabase
+    .from("memberships")
+    .select("team_id")
+    .eq("league_id", leagueId)
+    .eq("user_id", userId)
+    .maybeSingle();
 
-    // Try each conflict target set for this payload
-    for (let j = 0; j < conflictTargetsVariants.length; j++) {
-      const onConflict = conflictTargetsVariants[j].join(",");
+  if (membershipErr) return { supabase: null as any, userId: null as any, teamId: null as any, error: membershipErr.message };
 
-      const { error } = await supabase
-        .from(table)
-        .upsert(payload, { onConflict });
+  const teamId = membership?.team_id ?? null;
+  if (!teamId) return { supabase: null as any, userId, teamId: null as any, error: "No team selected for this league" };
 
-      if (!error) return { ok: true };
-      lastError = error;
-    }
-
-    // Also try plain insert (some schemas don't allow upsert or have no unique index)
-    const { error: insertErr } = await supabase.from(table).insert(payload);
-    if (!insertErr) return { ok: true };
-    lastError = insertErr;
-  }
-
-  return { ok: false, message: errMsg(lastError) };
+  return { supabase, userId, teamId, error: null as any };
 }
 
-async function tryDelete(
-  table: string,
-  whereVariants: Record<string, any>[]
-): Promise<TryResult> {
+/**
+ * Insert/upsert an offer row for (league_id, team_id, recruit_id).
+ * This tries a few column names so it survives schema drift.
+ */
+async function upsertOffer(params: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+  offerType?: string | null;
+}) {
+  const { leagueId, teamId, recruitId, offerType } = params;
   const supabase = supabaseServer();
-  let lastError: any = null;
 
-  for (const where of whereVariants) {
-    let q: any = supabase.from(table).delete();
-    Object.entries(where).forEach(([k, v]) => (q = q.eq(k, v)));
-    const { error } = await q;
-    if (!error) return { ok: true };
-    lastError = error;
+  // Try likely column layouts.
+  const payloads: Record<string, any>[] = [
+    // common
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, offer_type: offerType ?? "scholarship" },
+    // alt naming
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, type: offerType ?? "scholarship" },
+    // some schemas use committed/target ids etc (less likely)
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId },
+  ];
+
+  let lastErr: string | null = null;
+
+  for (const payload of payloads) {
+    // Use upsert if possible (requires a unique constraint, but harmless if it exists)
+    const { error } = await supabase.from("recruiting_offers").upsert(payload as any);
+    if (!error) return { ok: true as const };
+
+    lastErr = error.message;
+
+    // If upsert fails because no unique constraint, fall back to insert
+    const { error: insErr } = await supabase.from("recruiting_offers").insert(payload as any);
+    if (!insErr) return { ok: true as const };
+    lastErr = insErr.message;
   }
 
-  return { ok: false, message: errMsg(lastError) };
+  return { ok: false as const, message: lastErr ?? "Unknown offer insert error" };
+}
+
+async function deleteOffer(params: { leagueId: string; teamId: string; recruitId: string }) {
+  const { leagueId, teamId, recruitId } = params;
+  const supabase = supabaseServer();
+
+  // delete is schema stable if these columns exist; if not, you'll get a clear error
+  const { error } = await supabase
+    .from("recruiting_offers")
+    .delete()
+    .eq("league_id", leagueId)
+    .eq("team_id", teamId)
+    .eq("recruit_id", recruitId);
+
+  if (error) return { ok: false as const, message: error.message };
+  return { ok: true as const };
+}
+
+async function upsertVisit(params: { leagueId: string; teamId: string; recruitId: string; week: number }) {
+  const { leagueId, teamId, recruitId, week } = params;
+  const supabase = supabaseServer();
+
+  const payloads: Record<string, any>[] = [
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week },
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, visit_week: week },
+    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week_num: week },
+  ];
+
+  let lastErr: string | null = null;
+
+  for (const payload of payloads) {
+    const { error } = await supabase.from("recruit_visits").upsert(payload as any);
+    if (!error) return { ok: true as const };
+
+    lastErr = error.message;
+
+    const { error: insErr } = await supabase.from("recruit_visits").insert(payload as any);
+    if (!insErr) return { ok: true as const };
+    lastErr = insErr.message;
+  }
+
+  return { ok: false as const, message: lastErr ?? "Unknown visit insert error" };
 }
 
 /**
- * Offer: create/update the row linking (league, team, recruit)
- * amount is optional; you can later map to points/NIL/etc.
+ * Server Action: Make/Upsert offer
  */
-export async function makeOfferAction(args: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-  amount?: number | null;
-}) {
-  const { leagueId, teamId, recruitId, amount } = args;
+export async function makeOfferAction(formData: FormData): Promise<TryResult> {
+  const leagueId = String(formData.get("leagueId") ?? "");
+  const recruitId = String(formData.get("recruitId") ?? "");
+  const offerType = (formData.get("offerType") ? String(formData.get("offerType")) : "scholarship") as string;
 
-  // Common payload shapes we might have in different schema versions
-  const payloads: Record<string, any>[] = [
-    // Variant A: league_id/team_id/recruit_id + amount
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, amount: amount ?? null },
+  if (!leagueId) return fail("Missing leagueId");
+  if (!recruitId) return fail("Missing recruitId");
 
-    // Variant B: league_id/team_id/recruit_id + offer_amount
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, offer_amount: amount ?? null },
+  const { supabase, teamId, error } = await requireAuthAndTeam(leagueId);
+  if (error) return fail(error);
 
-    // Variant C: league_id/team_id/recruit_id + points
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, points: amount ?? null },
+  // use derived teamId from membership
+  const res = await upsertOffer({ leagueId, teamId, recruitId, offerType });
+  if (!res.ok) return fail(res.message);
 
-    // Variant D: some older schemas use committed_team_id or recruit_uuid (rare but seen)
-    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId, amount: amount ?? null },
-  ];
-
-  // Common unique keys for upsert (depends on your indexes)
-  const conflictTargets: string[][] = [
-    ["league_id", "team_id", "recruit_id"],
-    ["league_id", "recruit_id", "team_id"],
-    ["team_id", "recruit_id"],
-    ["league_id", "team_id", "recruit_uuid"],
-  ];
-
-  const res = await tryUpsert("recruiting_offers", payloads, conflictTargets);
-
-  if (!res.ok) {
-    throw new Error(`makeOfferAction failed: ${res.message}`);
-  }
-
-  return { ok: true };
-}
-
-export async function removeOfferAction(args: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-}) {
-  const { leagueId, teamId, recruitId } = args;
-
-  const whereVariants: Record<string, any>[] = [
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId },
-    { team_id: teamId, recruit_id: recruitId },
-    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId },
-  ];
-
-  const res = await tryDelete("recruiting_offers", whereVariants);
-
-  if (!res.ok) {
-    throw new Error(`removeOfferAction failed: ${res.message}`);
-  }
-
+  revalidatePath(`/league/${leagueId}/recruiting`);
   return { ok: true };
 }
 
 /**
- * Visit: schedule a visit week (number) or date string (optional)
- * You can later expand to "week", "type", "bonus", etc.
+ * Server Action: Remove offer
  */
-export async function scheduleVisitAction(args: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-  week?: number | null; // e.g., 1..15
-  visitDate?: string | null; // ISO string if you prefer
-}) {
-  const { leagueId, teamId, recruitId, week, visitDate } = args;
+export async function removeOfferAction(formData: FormData): Promise<TryResult> {
+  const leagueId = String(formData.get("leagueId") ?? "");
+  const recruitId = String(formData.get("recruitId") ?? "");
 
-  const payloads: Record<string, any>[] = [
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week: week ?? null, visit_date: visitDate ?? null },
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, visit_week: week ?? null, visit_date: visitDate ?? null },
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId, week_number: week ?? null, date: visitDate ?? null },
-    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId, week: week ?? null, visit_date: visitDate ?? null },
-  ];
+  if (!leagueId) return fail("Missing leagueId");
+  if (!recruitId) return fail("Missing recruitId");
 
-  const conflictTargets: string[][] = [
-    ["league_id", "team_id", "recruit_id"],
-    ["team_id", "recruit_id"],
-    ["league_id", "team_id", "recruit_uuid"],
-  ];
+  const { teamId, error } = await requireAuthAndTeam(leagueId);
+  if (error) return fail(error);
 
-  const res = await tryUpsert("recruit_visits", payloads, conflictTargets);
+  const res = await deleteOffer({ leagueId, teamId, recruitId });
+  if (!res.ok) return fail(res.message);
 
-  if (!res.ok) {
-    throw new Error(`scheduleVisitAction failed: ${res.message}`);
-  }
-
+  revalidatePath(`/league/${leagueId}/recruiting`);
   return { ok: true };
 }
 
-export async function cancelVisitAction(args: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-}) {
-  const { leagueId, teamId, recruitId } = args;
+/**
+ * Server Action: Schedule visit (week)
+ */
+export async function scheduleVisitAction(formData: FormData): Promise<TryResult> {
+  const leagueId = String(formData.get("leagueId") ?? "");
+  const recruitId = String(formData.get("recruitId") ?? "");
+  const week = Number(formData.get("week") ?? "");
 
-  const whereVariants: Record<string, any>[] = [
-    { league_id: leagueId, team_id: teamId, recruit_id: recruitId },
-    { team_id: teamId, recruit_id: recruitId },
-    { league_id: leagueId, team_id: teamId, recruit_uuid: recruitId },
-  ];
+  if (!leagueId) return fail("Missing leagueId");
+  if (!recruitId) return fail("Missing recruitId");
+  if (!Number.isFinite(week) || week <= 0) return fail("Invalid week");
 
-  const res = await tryDelete("recruit_visits", whereVariants);
+  const { teamId, error } = await requireAuthAndTeam(leagueId);
+  if (error) return fail(error);
 
-  if (!res.ok) {
-    throw new Error(`cancelVisitAction failed: ${res.message}`);
-  }
+  const res = await upsertVisit({ leagueId, teamId, recruitId, week });
+  if (!res.ok) return fail(res.message);
 
+  revalidatePath(`/league/${leagueId}/recruiting`);
   return { ok: true };
 }
