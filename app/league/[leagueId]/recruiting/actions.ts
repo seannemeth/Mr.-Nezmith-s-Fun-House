@@ -38,7 +38,7 @@ async function getAuthedLeague(leagueId: string) {
 }
 
 /**
- * Expected by recruiting-client.tsx:
+ * recruiting-client.tsx expects:
  *   await makeOfferAction({ leagueId, teamId, recruitId })
  */
 export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
@@ -50,15 +50,14 @@ export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
   const ctx = await getAuthedLeague(leagueId);
   if (!ctx.ok) return { ok: false, message: ctx.message };
 
-  const { supabase, user, league } = ctx;
+  const { supabase, league } = ctx;
 
-  // Insert offer (season is REQUIRED; do NOT write a week column)
+  // Insert offer (season REQUIRED; do NOT include non-existent columns like created_by)
   const { error: insErr } = await supabase.from("recruiting_offers").insert({
     league_id: leagueId,
     team_id: teamId,
     recruit_id: recruitId,
     season: league.current_season,
-    created_by: user.id,
   });
 
   if (insErr) return { ok: false, message: insErr.message };
@@ -68,7 +67,7 @@ export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
 }
 
 /**
- * Expected by recruiting-client.tsx:
+ * recruiting-client.tsx expects:
  *   await removeOfferAction({ leagueId, teamId, recruitId })
  */
 export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> {
@@ -97,8 +96,7 @@ export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> 
 }
 
 /**
- * Called by AdvanceWeekButton:
- *   await advanceRecruitingWeek(leagueId)
+ * Advance recruiting week (commissioner only).
  */
 export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
   if (!leagueId) return { ok: false, message: "Missing leagueId." };
