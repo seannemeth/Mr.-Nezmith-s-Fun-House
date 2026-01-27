@@ -1,112 +1,187 @@
-// app/league/[leagueId]/recruiting/actions.ts
-"use server";
+// app/league/[leagueId]/recruiting/recruiting-client.tsx
+"use client";
 
-import { revalidatePath } from "next/cache";
-import { supabaseServer } from "../../../../lib/supabaseServer";
+import * as React from "react";
+import { makeOfferAction, removeOfferAction } from "./actions";
 
-type ActionResult =
-  | { ok: true; message: string; data?: any }
-  | { ok: false; message: string; data?: any };
-
-type OfferArgs = {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
+export type RecruitRow = {
+  id: string;
+  name?: string;
+  pos?: string;
+  stars?: number;
+  rank?: number;
+  state?: string;
+  archetype?: string;
+  ovr?: number;
+  top8?: any;
+  offer?: boolean; // from RPC
+  visit?: any;
+  [k: string]: any;
 };
 
-async function getAuthedLeague(leagueId: string) {
-  const supabase = supabaseServer();
+export type Props = {
+  leagueId: string;
+  teamId: string;
+  recruits?: RecruitRow[];
+  rpcError?: string | null;
+};
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) return { ok: false as const, message: userErr.message };
-  if (!user) return { ok: false as const, message: "Not signed in." };
-
-  const { data: league, error: leagueErr } = await supabase
-    .from("leagues")
-    .select("id, commissioner_id, current_season, current_week")
-    .eq("id", leagueId)
-    .single();
-
-  if (leagueErr) return { ok: false as const, message: leagueErr.message };
-  if (!league) return { ok: false as const, message: "League not found." };
-
-  return { ok: true as const, supabase, user, league };
+function meta(r: RecruitRow) {
+  const parts = [
+    r.pos ?? "",
+    typeof r.stars === "number" ? `${r.stars}★` : "",
+    typeof r.rank === "number" ? `#${r.rank}` : "",
+    r.state ?? "",
+    r.archetype ?? "",
+    typeof r.ovr === "number" ? `OVR ${r.ovr}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
-export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
+export function RecruitingClient(props: Props) {
+  const [rows, setRows] = React.useState<RecruitRow[]>(
+    Array.isArray(props.recruits) ? props.recruits : []
+  );
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [msg, setMsg] = React.useState<string | null>(null);
 
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
+  React.useEffect(() => {
+    if (Array.isArray(props.recruits)) setRows(props.recruits);
+  }, [props.recruits]);
 
-  const { supabase, league } = ctx;
+  async function toggleOffer(r: RecruitRow) {
+    if (!r?.id) {
+      setMsg("❌ Recruit row missing id.");
+      return;
+    }
 
-  const { error: insErr } = await supabase.from("recruiting_offers").insert({
-    league_id: leagueId,
-    team_id: teamId,
-    recruit_id: recruitId,
-    season: league.current_season,
-  });
+    setMsg(null);
+    setBusyId(r.id);
 
-  if (insErr) return { ok: false, message: insErr.message };
+    try {
+      const hasOffer = Boolean(r.offer);
 
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer made." };
-}
+      const res = hasOffer
+        ? await removeOfferAction({
+            leagueId: props.leagueId,
+            teamId: props.teamId,
+            recruitId: r.id,
+          })
+        : await makeOfferAction({
+            leagueId: props.leagueId,
+            teamId: props.teamId,
+            recruitId: r.id,
+          });
 
-export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
+      if (!res?.ok) {
+        setMsg(`❌ ${res?.message ?? "Action failed"}`);
+        return;
+      }
 
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
+      setMsg(`✅ ${res.message}`);
 
-  const { supabase, league } = ctx;
-
-  const { error: delErr } = await supabase
-    .from("recruiting_offers")
-    .delete()
-    .eq("league_id", leagueId)
-    .eq("team_id", teamId)
-    .eq("recruit_id", recruitId)
-    .eq("season", league.current_season);
-
-  if (delErr) return { ok: false, message: delErr.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer removed." };
-}
-
-export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase, user, league } = ctx;
-
-  if (league.commissioner_id !== user.id) {
-    return { ok: false, message: "Only the commissioner can advance the week." };
+      setRows((prev) =>
+        (prev ?? []).map((x) => (x.id === r.id ? { ...x, offer: !hasOffer } : x))
+      );
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  const { data: summary, error: rpcErr } = await supabase.rpc(
-    "process_recruiting_week_v1",
-    { p_league_id: leagueId }
+  const safeRows = Array.isArray(rows) ? rows : [];
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {props.rpcError ? (
+        <div
+          style={{
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid rgba(180,0,0,0.25)",
+            background: "rgba(180,0,0,0.04)",
+            fontSize: 13,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          ❌ get_recruit_list_v1 error: {props.rpcError}
+        </div>
+      ) : null}
+
+      {msg ? <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{msg}</div> : null}
+
+      <div
+        style={{
+          border: "1px solid rgba(0,0,0,0.1)",
+          borderRadius: 14,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            padding: 12,
+            borderBottom: "1px solid rgba(0,0,0,0.08)",
+            fontWeight: 900,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <span>Recruits</span>
+          <span style={{ opacity: 0.7, fontSize: 13 }}>{safeRows.length}</span>
+        </div>
+
+        {safeRows.length === 0 ? (
+          <div style={{ padding: 12, opacity: 0.8, fontSize: 13 }}>
+            No recruits returned for this league/team.
+          </div>
+        ) : (
+          <div style={{ display: "grid" }}>
+            {safeRows.map((r) => {
+              const offered = Boolean(r.offer);
+              const isBusy = busyId === r.id;
+
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: 10,
+                    alignItems: "center",
+                    padding: 12,
+                    borderTop: "1px solid rgba(0,0,0,0.06)",
+                  }}
+                >
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <div style={{ fontWeight: 800 }}>{r.name ?? r.id}</div>
+                    <div style={{ fontSize: 12, opacity: 0.75 }}>{meta(r)}</div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleOffer(r)}
+                    disabled={isBusy}
+                    aria-busy={isBusy}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(0,0,0,0.15)",
+                      fontWeight: 800,
+                      cursor: isBusy ? "not-allowed" : "pointer",
+                      opacity: isBusy ? 0.7 : 1,
+                    }}
+                  >
+                    {isBusy ? "Working…" : offered ? "Remove Offer" : "Make Offer"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
-
-  if (rpcErr) return { ok: false, message: rpcErr.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  revalidatePath(`/league/${leagueId}`);
-
-  return { ok: true, message: "Week advanced successfully.", data: summary };
 }
+
+// ✅ Default export restored (fixes your build)
+export default RecruitingClient;
