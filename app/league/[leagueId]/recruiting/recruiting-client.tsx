@@ -3,7 +3,6 @@
 // app/league/[leagueId]/recruiting/recruiting-client.tsx
 import * as React from "react";
 import { makeOfferAction, removeOfferAction } from "./actions";
-import type { TryResult } from "./actions";
 
 export type RecruitRow = {
   id: string;
@@ -15,7 +14,7 @@ export type RecruitRow = {
   archetype: string | null;
   ovr: number | null;
 
-  // RPC returns offer + visit; treat "truthy" as existing
+  // treat "truthy" as offered
   offer?: any;
   visit?: any;
   top8?: any;
@@ -131,17 +130,22 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
     startTransition(async () => {
       const hasOffer = !!recruit.offer;
 
-      const res: TryResult = hasOffer
+      // NOTE: We intentionally treat the action result as unknown-ish
+      // and guard access to .message to avoid TS narrowing issues.
+      const res: any = hasOffer
         ? await removeOfferAction({ leagueId, teamId, recruitId: recruit.id })
         : await makeOfferAction({ leagueId, teamId, recruitId: recruit.id });
 
-      // ✅ This narrowing is now guaranteed because we imported TryResult explicitly.
-      if (!res.ok) {
-        setToast({ type: "err", msg: res.message });
+      if (!res || res.ok !== true) {
+        const msg =
+          res && typeof res === "object" && "message" in res
+            ? String((res as any).message)
+            : "Offer action failed.";
+        setToast({ type: "err", msg });
         return;
       }
 
-      // Optimistic local update
+      // Optimistic UI flip
       setRecruits((prev) =>
         prev.map((r) => (r.id === recruit.id ? { ...r, offer: hasOffer ? null : true } : r))
       );
@@ -173,7 +177,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
       )}
 
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* LEFT */}
+        {/* LEFT: list */}
         <div className="lg:col-span-7 rounded border bg-white">
           <div className="p-3 border-b bg-black/2 flex flex-wrap gap-2 items-center">
             <input
@@ -300,7 +304,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
           </div>
         </div>
 
-        {/* RIGHT */}
+        {/* RIGHT: detail */}
         <div className="lg:col-span-5 rounded border bg-white">
           <div className="p-4 border-b">
             <div className="text-xs text-black/60">Recruit Detail</div>
@@ -318,22 +322,20 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             {!selected ? (
               <div className="text-sm text-black/60">Select a recruit.</div>
             ) : (
-              <>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm">
-                    Offer status:{" "}
-                    <span className="font-medium">{selected.offer ? "Offered" : "Not offered"}</span>
-                  </div>
-
-                  <button
-                    disabled={isPending}
-                    onClick={() => toggleOffer(selected)}
-                    className="px-3 py-2 rounded border text-sm disabled:opacity-50"
-                  >
-                    {selected.offer ? "Remove Offer" : "Make Offer"}
-                  </button>
+              <div className="flex items-center justify-between">
+                <div className="text-sm">
+                  Offer status:{" "}
+                  <span className="font-medium">{selected.offer ? "Offered" : "Not offered"}</span>
                 </div>
-              </>
+
+                <button
+                  disabled={isPending}
+                  onClick={() => toggleOffer(selected)}
+                  className="px-3 py-2 rounded border text-sm disabled:opacity-50"
+                >
+                  {selected.offer ? "Remove Offer" : "Make Offer"}
+                </button>
+              </div>
             )}
           </div>
         </div>
