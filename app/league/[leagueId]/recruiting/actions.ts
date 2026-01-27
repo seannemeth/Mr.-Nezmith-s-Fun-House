@@ -8,12 +8,13 @@ type AdvanceWeekResult =
   | { ok: true; message: string; summary: any }
   | { ok: false; message: string };
 
-export async function advanceRecruitingWeek(leagueId: string): Promise<AdvanceWeekResult> {
+export async function advanceRecruitingWeek(
+  leagueId: string
+): Promise<AdvanceWeekResult> {
   if (!leagueId) return { ok: false, message: "Missing leagueId." };
 
   const supabase = createSupabaseServerClient();
 
-  // Auth
   const {
     data: { user },
     error: userErr,
@@ -22,7 +23,7 @@ export async function advanceRecruitingWeek(leagueId: string): Promise<AdvanceWe
   if (userErr) return { ok: false, message: userErr.message };
   if (!user) return { ok: false, message: "Not signed in." };
 
-  // Commissioner check (commissioner_only RPC + belt-and-suspenders guard)
+  // Belt-and-suspenders commissioner check (RPC should also enforce commissioner_only)
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
     .select("id, commissioner_id, current_season, current_week")
@@ -36,7 +37,6 @@ export async function advanceRecruitingWeek(leagueId: string): Promise<AdvanceWe
     return { ok: false, message: "Only the commissioner can advance the week." };
   }
 
-  // Call weekly processor RPC (commissioner_only=true per your context)
   const { data: summary, error: rpcErr } = await supabase.rpc(
     "process_recruiting_week_v1",
     { p_league_id: leagueId }
@@ -44,13 +44,9 @@ export async function advanceRecruitingWeek(leagueId: string): Promise<AdvanceWe
 
   if (rpcErr) return { ok: false, message: rpcErr.message };
 
-  // Revalidate the recruiting page (and league shell if you have one)
+  // Refresh recruiting UI
   revalidatePath(`/league/${leagueId}/recruiting`);
   revalidatePath(`/league/${leagueId}`);
 
-  return {
-    ok: true,
-    message: "Week advanced successfully.",
-    summary,
-  };
+  return { ok: true, message: "Week advanced successfully.", summary };
 }
