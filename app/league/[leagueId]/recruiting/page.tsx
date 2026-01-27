@@ -10,17 +10,41 @@ export default async function Page({
   const leagueId = params.leagueId;
   const supabase = supabaseServer();
 
+  // Auth
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
+  if (!user) {
+    return (
+      <div style={{ padding: 16 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+        <div style={{ marginTop: 8, opacity: 0.8 }}>Please sign in.</div>
+      </div>
+    );
+  }
+
+  // League + commissioner
   const { data: league } = await supabase
     .from("leagues")
     .select("id, commissioner_id, current_season, current_week")
     .eq("id", leagueId)
     .single();
 
-  const isCommissioner = Boolean(user && league && league.commissioner_id === user.id);
+  const isCommissioner = Boolean(league && league.commissioner_id === user.id);
+
+  // Team context (membership)
+  const { data: membership } = await supabase
+    .from("memberships")
+    .select("team_id")
+    .eq("league_id", leagueId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const teamId = membership?.team_id ?? null;
+
+  // Import your existing client UI (typed as any so this page won’t break on prop typing)
+  const RecruitingClient = (await import("./recruiting-client")).default as any;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -53,17 +77,21 @@ export default async function Page({
         ) : null}
       </div>
 
-      {/* Keep / replace this with your actual recruit list UI */}
-      <div
-        style={{
-          padding: 14,
-          borderRadius: 14,
-          border: "1px dashed rgba(0,0,0,0.2)",
-          opacity: 0.85,
-        }}
-      >
-        Recruit list component goes here (keep your current implementation).
-      </div>
+      {!teamId ? (
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 14,
+            border: "1px solid rgba(0,0,0,0.1)",
+            opacity: 0.85,
+          }}
+        >
+          You are not assigned to a team in this league (no membership.team_id found).
+        </div>
+      ) : (
+        // Render your actual recruiting UI
+        <RecruitingClient leagueId={leagueId} teamId={teamId} />
+      )}
     </div>
   );
 }
