@@ -72,7 +72,7 @@ export default async function Page({
     );
   }
 
-  // Server-fetch recruits + capture RPC error
+  // ✅ Correct overload (5 args)
   let recruits: any[] = [];
   let rpcErrorMsg: string | null = null;
 
@@ -80,6 +80,9 @@ export default async function Page({
     "get_recruit_list_v1",
     {
       p_league_id: leagueId,
+      p_limit: 250,
+      p_offset: 0,
+      p_only_uncommitted: false,
       p_team_id: teamId,
     }
   );
