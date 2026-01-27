@@ -3,6 +3,7 @@
 // app/league/[leagueId]/recruiting/recruiting-client.tsx
 import * as React from "react";
 import { makeOfferAction, removeOfferAction } from "./actions";
+import type { TryResult } from "./actions";
 
 export type RecruitRow = {
   id: string;
@@ -14,12 +15,9 @@ export type RecruitRow = {
   archetype: string | null;
   ovr: number | null;
 
-  // Your RPC says it returns offer + visit.
-  // offer can be boolean or object. We'll treat "truthy" as offered.
+  // RPC returns offer + visit; treat "truthy" as existing
   offer?: any;
   visit?: any;
-
-  // optional extras
   top8?: any;
 };
 
@@ -53,7 +51,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
     null
   );
 
-  // ---------- derived ----------
   const selected = React.useMemo(
     () => recruits.find((r) => r.id === selectedId) ?? null,
     [recruits, selectedId]
@@ -83,6 +80,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
       if (minStars > 0 && (r.stars ?? 0) < minStars) return false;
       if (posFilter !== "ALL" && (r.pos ?? "") !== posFilter) return false;
       if (stateFilter !== "ALL" && (r.state ?? "") !== stateFilter) return false;
+
       if (q) {
         const hay = `${r.name ?? ""} ${r.pos ?? ""} ${r.state ?? ""} ${r.archetype ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -99,7 +97,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
       const av = getSortValue(a, sortKey);
       const bv = getSortValue(b, sortKey);
 
-      // handle nulls
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
@@ -120,45 +117,39 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
   }, [sorted, pageSafe]);
 
   React.useEffect(() => {
-    // reset to page 1 if filters change
     setPage(1);
   }, [query, minStars, posFilter, stateFilter]);
 
   React.useEffect(() => {
-    // keep selection valid
     if (selectedId && recruits.some((r) => r.id === selectedId)) return;
     setSelectedId(recruits?.[0]?.id ?? null);
   }, [recruits, selectedId]);
 
-  // ---------- actions ----------
   async function toggleOffer(recruit: RecruitRow) {
     setToast(null);
 
     startTransition(async () => {
       const hasOffer = !!recruit.offer;
 
-      const res = hasOffer
+      const res: TryResult = hasOffer
         ? await removeOfferAction({ leagueId, teamId, recruitId: recruit.id })
         : await makeOfferAction({ leagueId, teamId, recruitId: recruit.id });
 
+      // ✅ This narrowing is now guaranteed because we imported TryResult explicitly.
       if (!res.ok) {
         setToast({ type: "err", msg: res.message });
         return;
       }
 
-      // Optimistic local update: flip offer state
+      // Optimistic local update
       setRecruits((prev) =>
-        prev.map((r) => {
-          if (r.id !== recruit.id) return r;
-          return { ...r, offer: hasOffer ? null : true };
-        })
+        prev.map((r) => (r.id === recruit.id ? { ...r, offer: hasOffer ? null : true } : r))
       );
 
       setToast({ type: "ok", msg: hasOffer ? "Offer removed." : "Offer made." });
     });
   }
 
-  // ---------- UI ----------
   return (
     <div className="p-4 md:p-6">
       <div className="flex items-center justify-between gap-3">
@@ -182,9 +173,8 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
       )}
 
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* LEFT: list */}
+        {/* LEFT */}
         <div className="lg:col-span-7 rounded border bg-white">
-          {/* filters */}
           <div className="p-3 border-b bg-black/2 flex flex-wrap gap-2 items-center">
             <input
               value={query}
@@ -238,7 +228,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             </div>
           </div>
 
-          {/* header row */}
           <div className="px-3 py-2 border-b text-xs text-black/60 grid grid-cols-12 gap-2">
             <HeaderCell label="Rank" k="rank" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
             <HeaderCell label="Name" k="name" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} className="col-span-4" />
@@ -249,7 +238,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             <div className="col-span-2 text-right pr-2">Offer</div>
           </div>
 
-          {/* rows */}
           <div className="divide-y">
             {paged.map((r) => {
               const isSel = r.id === selectedId;
@@ -289,7 +277,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             })}
           </div>
 
-          {/* pagination */}
           <div className="p-3 border-t flex items-center justify-between text-sm">
             <button
               className="px-3 py-2 rounded border disabled:opacity-50"
@@ -313,7 +300,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
           </div>
         </div>
 
-        {/* RIGHT: detail */}
+        {/* RIGHT */}
         <div className="lg:col-span-5 rounded border bg-white">
           <div className="p-4 border-b">
             <div className="text-xs text-black/60">Recruit Detail</div>
@@ -345,15 +332,6 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
                   >
                     {selected.offer ? "Remove Offer" : "Make Offer"}
                   </button>
-                </div>
-
-                <div className="rounded border bg-black/2 p-3 text-xs text-black/70">
-                  <div className="font-medium">Next</div>
-                  <ul className="list-disc pl-5 mt-1 space-y-1">
-                    <li>Make offers to recruits you want.</li>
-                    <li>Then run your weekly recruiting processor to advance interest.</li>
-                    <li>Once interest hits threshold, commits will begin to populate.</li>
-                  </ul>
                 </div>
               </>
             )}
@@ -398,16 +376,14 @@ function HeaderCell(props: {
   className?: string;
 }) {
   const active = props.sortKey === props.k;
+
   return (
     <button
-      className={[
-        "col-span-1 text-left hover:underline",
-        props.className ?? "",
-      ].join(" ")}
+      className={["col-span-1 text-left hover:underline", props.className ?? ""].join(" ")}
       onClick={() => {
         if (!active) {
           props.setSortKey(props.k);
-          props.setSortDir(props.k === "name" ? "asc" : "asc");
+          props.setSortDir("asc");
         } else {
           props.setSortDir(props.sortDir === "asc" ? "desc" : "asc");
         }
