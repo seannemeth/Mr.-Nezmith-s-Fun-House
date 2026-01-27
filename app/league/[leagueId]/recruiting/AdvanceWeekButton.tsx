@@ -14,12 +14,9 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
 
-  const btnLabel = useMemo(() => {
-    if (isPending) return "Advancing…";
-    return "Advance Week";
-  }, [isPending]);
+  const label = useMemo(() => (isPending ? "Advancing…" : "Advance Week"), [isPending]);
 
-  function onClick() {
+  const onClick = () => {
     setStatus(null);
     setSummary(null);
 
@@ -32,7 +29,7 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
       setStatus(`✅ ${res.message}`);
       setSummary(res.summary ?? null);
     });
-  }
+  };
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -40,16 +37,16 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
         type="button"
         onClick={onClick}
         disabled={Boolean(disabled) || isPending}
+        aria-busy={isPending}
         style={{
           padding: "10px 14px",
           borderRadius: 10,
           border: "1px solid rgba(0,0,0,0.15)",
+          fontWeight: 700,
           cursor: Boolean(disabled) || isPending ? "not-allowed" : "pointer",
-          fontWeight: 600,
         }}
-        aria-busy={isPending}
       >
-        {btnLabel}
+        {label}
       </button>
 
       {status ? (
