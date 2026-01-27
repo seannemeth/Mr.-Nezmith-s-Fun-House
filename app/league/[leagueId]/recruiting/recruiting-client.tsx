@@ -183,5 +183,4 @@ export function RecruitingClient(props: Props) {
   );
 }
 
-// ✅ Default export restored (fixes your build)
 export default RecruitingClient;
