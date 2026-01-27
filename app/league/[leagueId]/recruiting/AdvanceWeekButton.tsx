@@ -25,9 +25,18 @@ export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
 
     startTransition(async () => {
       const res = await advanceRecruitingWeek(leagueId);
-      if (!res.ok) return setStatus(`❌ ${res.message}`);
+
+      if (!res.ok) {
+        setStatus(`❌ ${res.message}`);
+        return;
+      }
+
       setStatus(`✅ ${res.message}`);
-      setSummary(res.summary ?? null);
+
+      // Weekly processor output is returned as `data` by our actions.ts.
+      // Also tolerate an older `summary` shape if you ever revert.
+      const anyRes = res as any;
+      setSummary(anyRes.data ?? anyRes.summary ?? null);
     });
   };
 
