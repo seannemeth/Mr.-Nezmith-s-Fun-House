@@ -11,7 +11,6 @@ export default async function Page({
   const leagueId = params.leagueId;
   const supabase = supabaseServer();
 
-  // Auth
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -25,7 +24,6 @@ export default async function Page({
     );
   }
 
-  // League
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
     .select("id, commissioner_id, current_season, current_week")
@@ -45,7 +43,6 @@ export default async function Page({
 
   const isCommissioner = league.commissioner_id === user.id;
 
-  // Membership -> teamId
   const { data: membership, error: memErr } = await supabase
     .from("memberships")
     .select("team_id")
@@ -73,19 +70,6 @@ export default async function Page({
         </div>
       </div>
     );
-  }
-
-  // Fetch recruit list from RPC. If RPC signature differs, we fail soft to [] so client won't crash.
-  let recruitRows: any[] = [];
-  try {
-    const { data, error } = await supabase.rpc("get_recruit_list_v1", {
-      p_league_id: leagueId,
-      p_team_id: teamId,
-    });
-
-    if (!error && Array.isArray(data)) recruitRows = data;
-  } catch {
-    // keep recruitRows = []
   }
 
   return (
@@ -119,16 +103,7 @@ export default async function Page({
         ) : null}
       </div>
 
-      {/* Pass data under multiple common prop names to satisfy your existing client expectations */}
-      <RecruitingClient
-        leagueId={leagueId}
-        teamId={teamId}
-        recruits={recruitRows}
-        rows={recruitRows}
-        recruitRows={recruitRows}
-        initialRecruits={recruitRows}
-        initialRows={recruitRows}
-      />
+      <RecruitingClient leagueId={leagueId} teamId={teamId} />
     </div>
   );
 }
