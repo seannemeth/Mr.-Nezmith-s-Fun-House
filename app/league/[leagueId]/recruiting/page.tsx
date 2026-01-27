@@ -7,7 +7,7 @@ import RecruitingClient, { RecruitRow } from "./recruiting-client";
 // - import { supabaseServer } from "@/lib/supabase/server";
 // - import { createClient } from "@/utils/supabase/server";
 // - etc.
-import { supabaseServer } from "@/lib/supabaseServer";
+import { supabaseServer } from "../../../../lib/supabaseServer";
 
 type PageProps = {
   params: { leagueId: string };
