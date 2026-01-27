@@ -1,76 +1,69 @@
-// app/league/[leagueId]/recruiting/AdvanceWeekButton.tsx
-"use client";
+// app/league/[leagueId]/recruiting/page.tsx
+import AdvanceWeekButton from "./AdvanceWeekButton";
+import { supabaseServer } from "../../../../lib/supabaseServer";
 
-import React, { useMemo, useState, useTransition } from "react";
-import { advanceRecruitingWeek } from "./actions";
+export default async function Page({
+  params,
+}: {
+  params: { leagueId: string };
+}) {
+  const leagueId = params.leagueId;
+  const supabase = supabaseServer();
 
-type Props = {
-  leagueId: string;
-  disabled?: boolean;
-};
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
-  const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
-  const [summary, setSummary] = useState<any>(null);
+  const { data: league } = await supabase
+    .from("leagues")
+    .select("id, commissioner_id, current_season, current_week")
+    .eq("id", leagueId)
+    .single();
 
-  const label = useMemo(
-    () => (isPending ? "Advancing…" : "Advance Week"),
-    [isPending]
-  );
-
-  const onClick = () => {
-    setStatus(null);
-    setSummary(null);
-
-    startTransition(async () => {
-      const res = await advanceRecruitingWeek(leagueId);
-      if (!res.ok) return setStatus(`❌ ${res.message}`);
-      setStatus(`✅ ${res.message}`);
-      setSummary(res.summary ?? null);
-    });
-  };
+  const isCommissioner = Boolean(user && league && league.commissioner_id === user.id);
 
   return (
-    <div style={{ display: "grid", gap: 10 }}>
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={Boolean(disabled) || isPending}
-        aria-busy={isPending}
+    <div style={{ display: "grid", gap: 16 }}>
+      <div
         style={{
-          padding: "10px 14px",
-          borderRadius: 10,
-          border: "1px solid rgba(0,0,0,0.15)",
-          fontWeight: 800,
-          cursor: Boolean(disabled) || isPending ? "not-allowed" : "pointer",
+          padding: 14,
+          borderRadius: 14,
+          border: "1px solid rgba(0,0,0,0.1)",
+          display: "grid",
+          gap: 10,
         }}
       >
-        {label}
-      </button>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
+            <div style={{ fontSize: 13, opacity: 0.75 }}>
+              Season {league?.current_season ?? "—"} · Week {league?.current_week ?? "—"}
+            </div>
+          </div>
 
-      {status ? (
-        <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
-          {status}
+          <div style={{ minWidth: 180 }}>
+            <AdvanceWeekButton leagueId={leagueId} disabled={!isCommissioner} />
+          </div>
         </div>
-      ) : null}
 
-      {summary ? (
-        <details style={{ fontSize: 13 }}>
-          <summary style={{ cursor: "pointer" }}>Processor summary</summary>
-          <pre
-            style={{
-              marginTop: 8,
-              padding: 10,
-              borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.1)",
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
-      ) : null}
+        {!isCommissioner ? (
+          <div style={{ fontSize: 13, opacity: 0.75 }}>
+            Only the commissioner can advance the week.
+          </div>
+        ) : null}
+      </div>
+
+      {/* Keep / replace this with your actual recruit list UI */}
+      <div
+        style={{
+          padding: 14,
+          borderRadius: 14,
+          border: "1px dashed rgba(0,0,0,0.2)",
+          opacity: 0.85,
+        }}
+      >
+        Recruit list component goes here (keep your current implementation).
+      </div>
     </div>
   );
 }
