@@ -1,23 +1,20 @@
 "use client";
 
-// app/league/[leagueId]/recruiting/recruiting-client.tsx
 import * as React from "react";
 import { makeOfferAction, removeOfferAction } from "./actions";
 
 export type RecruitRow = {
   id: string;
-  name: string;
+  name: string | null;
   pos: string | null;
   stars: number | null;
   rank: number | null;
   state: string | null;
   archetype: string | null;
   ovr: number | null;
-
-  // treat "truthy" as offered
-  offer?: any;
-  visit?: any;
   top8?: any;
+  offer?: any; // truthy = offered
+  visit?: any;
 };
 
 type Props = {
@@ -26,7 +23,7 @@ type Props = {
   initialRecruits: RecruitRow[];
 };
 
-type SortKey = "rank" | "stars" | "ovr" | "name" | "pos" | "state";
+type SortKey = "rank" | "name" | "pos" | "state" | "stars" | "ovr";
 
 export default function RecruitingClient({ leagueId, teamId, initialRecruits }: Props) {
   const [recruits, setRecruits] = React.useState<RecruitRow[]>(initialRecruits);
@@ -115,14 +112,18 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
     return sorted.slice(start, start + pageSize);
   }, [sorted, pageSafe]);
 
-  React.useEffect(() => {
-    setPage(1);
-  }, [query, minStars, posFilter, stateFilter]);
+  React.useEffect(() => setPage(1), [query, minStars, posFilter, stateFilter]);
 
   React.useEffect(() => {
     if (selectedId && recruits.some((r) => r.id === selectedId)) return;
     setSelectedId(recruits?.[0]?.id ?? null);
   }, [recruits, selectedId]);
+
+  function showErr(res: any) {
+    const msg =
+      res && typeof res === "object" && "message" in res ? String((res as any).message) : "Action failed.";
+    setToast({ type: "err", msg });
+  }
 
   async function toggleOffer(recruit: RecruitRow) {
     setToast(null);
@@ -130,22 +131,15 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
     startTransition(async () => {
       const hasOffer = !!recruit.offer;
 
-      // NOTE: We intentionally treat the action result as unknown-ish
-      // and guard access to .message to avoid TS narrowing issues.
       const res: any = hasOffer
         ? await removeOfferAction({ leagueId, teamId, recruitId: recruit.id })
         : await makeOfferAction({ leagueId, teamId, recruitId: recruit.id });
 
       if (!res || res.ok !== true) {
-        const msg =
-          res && typeof res === "object" && "message" in res
-            ? String((res as any).message)
-            : "Offer action failed.";
-        setToast({ type: "err", msg });
+        showErr(res);
         return;
       }
 
-      // Optimistic UI flip
       setRecruits((prev) =>
         prev.map((r) => (r.id === recruit.id ? { ...r, offer: hasOffer ? null : true } : r))
       );
@@ -156,9 +150,8 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
 
   return (
     <div className="p-4 md:p-6">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <h1 className="text-xl font-semibold">Recruiting</h1>
-
         <div className="text-xs text-black/60">
           League: <span className="font-mono">{leagueId}</span> • Team:{" "}
           <span className="font-mono">{teamId}</span>
@@ -177,8 +170,9 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
       )}
 
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* LEFT: list */}
-        <div className="lg:col-span-7 rounded border bg-white">
+        {/* LEFT: LIST */}
+        <div className="lg:col-span-7 rounded border bg-white overflow-hidden">
+          {/* Filters */}
           <div className="p-3 border-b bg-black/2 flex flex-wrap gap-2 items-center">
             <input
               value={query}
@@ -232,16 +226,18 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             </div>
           </div>
 
+          {/* Header (12-col grid, consistent spans) */}
           <div className="px-3 py-2 border-b text-xs text-black/60 grid grid-cols-12 gap-2">
-            <HeaderCell label="Rank" k="rank" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
-            <HeaderCell label="Name" k="name" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} className="col-span-4" />
-            <HeaderCell label="Pos" k="pos" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
-            <HeaderCell label="St" k="state" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
-            <HeaderCell label="★" k="stars" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
-            <HeaderCell label="OVR" k="ovr" sortKey={sortKey} sortDir={sortDir} setSortKey={setSortKey} setSortDir={setSortDir} />
+            <HeaderCell label="Rank" k="rank" span="col-span-1" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
+            <HeaderCell label="Name" k="name" span="col-span-5" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
+            <HeaderCell label="Pos" k="pos" span="col-span-1" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
+            <HeaderCell label="St" k="state" span="col-span-1" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
+            <HeaderCell label="★" k="stars" span="col-span-1" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
+            <HeaderCell label="OVR" k="ovr" span="col-span-1" {...{ sortKey, sortDir, setSortKey, setSortDir }} />
             <div className="col-span-2 text-right pr-2">Offer</div>
           </div>
 
+          {/* Rows */}
           <div className="divide-y">
             {paged.map((r) => {
               const isSel = r.id === selectedId;
@@ -257,16 +253,18 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
                   ].join(" ")}
                 >
                   <div className="col-span-1 font-mono text-xs text-black/70">{fmt(r.rank)}</div>
-                  <div className="col-span-4">
-                    <div className="font-medium leading-tight">{r.name}</div>
-                    <div className="text-xs text-black/60">{r.archetype ?? ""}</div>
+
+                  <div className="col-span-5 min-w-0">
+                    <div className="font-medium leading-tight truncate">{r.name ?? "—"}</div>
+                    <div className="text-xs text-black/60 truncate">{r.archetype ?? ""}</div>
                   </div>
+
                   <div className="col-span-1 font-mono text-xs">{r.pos ?? "-"}</div>
                   <div className="col-span-1 font-mono text-xs">{r.state ?? "-"}</div>
                   <div className="col-span-1 font-mono text-xs">{fmt(r.stars)}</div>
                   <div className="col-span-1 font-mono text-xs">{fmt(r.ovr)}</div>
 
-                  <div className="col-span-3 flex items-center justify-end gap-2">
+                  <div className="col-span-2 flex items-center justify-end">
                     <span
                       className={[
                         "text-[11px] px-2 py-1 rounded border",
@@ -281,6 +279,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             })}
           </div>
 
+          {/* Pagination */}
           <div className="p-3 border-t flex items-center justify-between text-sm">
             <button
               className="px-3 py-2 rounded border disabled:opacity-50"
@@ -304,8 +303,8 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
           </div>
         </div>
 
-        {/* RIGHT: detail */}
-        <div className="lg:col-span-5 rounded border bg-white">
+        {/* RIGHT: DETAIL */}
+        <div className="lg:col-span-5 rounded border bg-white overflow-hidden">
           <div className="p-4 border-b">
             <div className="text-xs text-black/60">Recruit Detail</div>
             <div className="mt-1 text-lg font-semibold">{selected?.name ?? "—"}</div>
@@ -322,7 +321,7 @@ export default function RecruitingClient({ leagueId, teamId, initialRecruits }: 
             {!selected ? (
               <div className="text-sm text-black/60">Select a recruit.</div>
             ) : (
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div className="text-sm">
                   Offer status:{" "}
                   <span className="font-medium">{selected.offer ? "Offered" : "Not offered"}</span>
@@ -348,16 +347,16 @@ function getSortValue(r: RecruitRow, key: SortKey) {
   switch (key) {
     case "rank":
       return r.rank ?? null;
-    case "stars":
-      return r.stars ?? null;
-    case "ovr":
-      return r.ovr ?? null;
     case "name":
       return r.name ?? "";
     case "pos":
       return r.pos ?? "";
     case "state":
       return r.state ?? "";
+    case "stars":
+      return r.stars ?? null;
+    case "ovr":
+      return r.ovr ?? null;
     default:
       return null;
   }
@@ -371,21 +370,21 @@ function fmt(v: any) {
 function HeaderCell(props: {
   label: string;
   k: SortKey;
+  span: string;
   sortKey: SortKey;
   sortDir: "asc" | "desc";
   setSortKey: (k: SortKey) => void;
   setSortDir: (d: "asc" | "desc") => void;
-  className?: string;
 }) {
   const active = props.sortKey === props.k;
 
   return (
     <button
-      className={["col-span-1 text-left hover:underline", props.className ?? ""].join(" ")}
+      className={[props.span, "text-left hover:underline"].join(" ")}
       onClick={() => {
         if (!active) {
           props.setSortKey(props.k);
-          props.setSortDir("asc");
+          props.setSortDir(props.k === "name" ? "asc" : "asc");
         } else {
           props.setSortDir(props.sortDir === "asc" ? "desc" : "asc");
         }
