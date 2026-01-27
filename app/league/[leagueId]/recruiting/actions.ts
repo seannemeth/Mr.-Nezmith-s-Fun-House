@@ -8,7 +8,13 @@ type ActionResult =
   | { ok: true; message: string; data?: any }
   | { ok: false; message: string; data?: any };
 
-async function getAuthedContext(leagueId: string) {
+type OfferArgs = {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+};
+
+async function getAuthedLeague(leagueId: string) {
   const supabase = supabaseServer();
 
   const {
@@ -32,88 +38,50 @@ async function getAuthedContext(leagueId: string) {
 }
 
 /**
- * Make an offer to a recruit.
- * Expected by recruiting-client.tsx: makeOfferAction
- *
- * NOTE: season is REQUIRED on insert (per your context).
- * We DO NOT write a `week` column (doesn't exist on offers).
+ * Expected by recruiting-client.tsx:
+ *   await makeOfferAction({ leagueId, teamId, recruitId })
  */
-export async function makeOfferAction(
-  leagueId: string,
-  recruitId: string
-): Promise<ActionResult> {
+export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
+  const { leagueId, teamId, recruitId } = args ?? ({} as any);
   if (!leagueId) return { ok: false, message: "Missing leagueId." };
+  if (!teamId) return { ok: false, message: "Missing teamId." };
   if (!recruitId) return { ok: false, message: "Missing recruitId." };
 
-  const ctx = await getAuthedContext(leagueId);
+  const ctx = await getAuthedLeague(leagueId);
   if (!ctx.ok) return { ok: false, message: ctx.message };
 
   const { supabase, user, league } = ctx;
 
-  // Find user's team in this league
-  const { data: membership, error: memErr } = await supabase
-    .from("memberships")
-    .select("team_id")
-    .eq("league_id", leagueId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (memErr) return { ok: false, message: memErr.message };
-  if (!membership?.team_id) {
-    return { ok: false, message: "You are not assigned to a team in this league." };
-  }
-
-  const teamId = membership.team_id;
-
-  // Insert offer (schema: league_id, team_id, recruit_id, season, created_by)
+  // Insert offer (season is REQUIRED; do NOT write a week column)
   const { error: insErr } = await supabase.from("recruiting_offers").insert({
     league_id: leagueId,
     team_id: teamId,
     recruit_id: recruitId,
-    season: league.current_season, // REQUIRED
+    season: league.current_season,
     created_by: user.id,
   });
 
-  if (insErr) {
-    // Common: unique constraint (already offered)
-    return { ok: false, message: insErr.message };
-  }
+  if (insErr) return { ok: false, message: insErr.message };
 
   revalidatePath(`/league/${leagueId}/recruiting`);
   return { ok: true, message: "Offer made." };
 }
 
 /**
- * Remove an offer.
- * Expected by recruiting-client.tsx: removeOfferAction
+ * Expected by recruiting-client.tsx:
+ *   await removeOfferAction({ leagueId, teamId, recruitId })
  */
-export async function removeOfferAction(
-  leagueId: string,
-  recruitId: string
-): Promise<ActionResult> {
+export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> {
+  const { leagueId, teamId, recruitId } = args ?? ({} as any);
   if (!leagueId) return { ok: false, message: "Missing leagueId." };
+  if (!teamId) return { ok: false, message: "Missing teamId." };
   if (!recruitId) return { ok: false, message: "Missing recruitId." };
 
-  const ctx = await getAuthedContext(leagueId);
+  const ctx = await getAuthedLeague(leagueId);
   if (!ctx.ok) return { ok: false, message: ctx.message };
 
-  const { supabase, user, league } = ctx;
+  const { supabase, league } = ctx;
 
-  const { data: membership, error: memErr } = await supabase
-    .from("memberships")
-    .select("team_id")
-    .eq("league_id", leagueId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (memErr) return { ok: false, message: memErr.message };
-  if (!membership?.team_id) {
-    return { ok: false, message: "You are not assigned to a team in this league." };
-  }
-
-  const teamId = membership.team_id;
-
-  // Delete the offer for THIS team / recruit / season
   const { error: delErr } = await supabase
     .from("recruiting_offers")
     .delete()
@@ -129,13 +97,13 @@ export async function removeOfferAction(
 }
 
 /**
- * Advance recruiting week.
- * Wiring for commissioner-only weekly processor.
+ * Called by AdvanceWeekButton:
+ *   await advanceRecruitingWeek(leagueId)
  */
 export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
   if (!leagueId) return { ok: false, message: "Missing leagueId." };
 
-  const ctx = await getAuthedContext(leagueId);
+  const ctx = await getAuthedLeague(leagueId);
   if (!ctx.ok) return { ok: false, message: ctx.message };
 
   const { supabase, user, league } = ctx;
