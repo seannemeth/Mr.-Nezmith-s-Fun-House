@@ -1,35 +1,45 @@
-// lib/supabase/server.ts
+// lib/supabaseServer.ts
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export function createSupabaseServerClient() {
+/**
+ * Server-side Supabase client (App Router).
+ *
+ * Your codebase imports:
+ *   import { supabaseServer } from "../lib/supabaseServer";
+ *
+ * So we export `supabaseServer()` to match.
+ */
+export function supabaseServer() {
   const cookieStore = cookies();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || !anon) {
+  if (!url || !anonKey) {
     throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY env vars."
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY"
     );
   }
 
-  return createServerClient(url, anon, {
+  return createServerClient(url, anonKey, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
       setAll(cookiesToSet) {
-        // Next.js App Router cookies are mutable only in Server Actions / Route Handlers.
-        // This is safe here because we only call this from Server Components/Actions.
+        // In some contexts cookies can be read-only; ignore if so.
         try {
           cookiesToSet.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
           });
         } catch {
-          // ignore - can happen in read-only contexts
+          // noop
         }
       },
     },
   });
 }
+
+// Optional: some files might default-import; this keeps it flexible.
+export default supabaseServer;
