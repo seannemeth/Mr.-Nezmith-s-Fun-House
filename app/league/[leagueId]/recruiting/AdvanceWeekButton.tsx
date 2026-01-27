@@ -1,84 +1,66 @@
 // app/league/[leagueId]/recruiting/AdvanceWeekButton.tsx
 "use client";
 
-import React, { useMemo, useState, useTransition } from "react";
+import * as React from "react";
+import { useRouter } from "next/navigation";
 import { advanceRecruitingWeek } from "./actions";
 
-type Props = {
+export default function AdvanceWeekButton({
+  leagueId,
+  disabled,
+}: {
   leagueId: string;
   disabled?: boolean;
-};
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState<string | null>(null);
 
-export default function AdvanceWeekButton({ leagueId, disabled }: Props) {
-  const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
-  const [summary, setSummary] = useState<any>(null);
-
-  const label = useMemo(
-    () => (isPending ? "Advancing…" : "Advance Week"),
-    [isPending]
-  );
-
-  const onClick = () => {
+  async function onClick() {
+    if (!leagueId) return;
+    setBusy(true);
     setStatus(null);
-    setSummary(null);
 
-    startTransition(async () => {
+    try {
       const res = await advanceRecruitingWeek(leagueId);
 
-      if (!res.ok) {
-        setStatus(`❌ ${res.message}`);
+      if (!res?.ok) {
+        setStatus(`❌ ${res?.message ?? "Failed"}`);
         return;
       }
 
       setStatus(`✅ ${res.message}`);
 
-      // Weekly processor output is returned as `data` by our actions.ts.
-      // Also tolerate an older `summary` shape if you ever revert.
-      const anyRes = res as any;
-      setSummary(anyRes.data ?? anyRes.summary ?? null);
-    });
-  };
+      // ✅ This is the key: re-fetch Server Component data
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div style={{ display: "grid", gap: 10 }}>
+    <div style={{ display: "grid", gap: 8 }}>
       <button
         type="button"
         onClick={onClick}
-        disabled={Boolean(disabled) || isPending}
-        aria-busy={isPending}
+        disabled={Boolean(disabled) || busy}
         style={{
-          padding: "10px 14px",
-          borderRadius: 10,
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: 12,
           border: "1px solid rgba(0,0,0,0.15)",
-          fontWeight: 800,
-          cursor: Boolean(disabled) || isPending ? "not-allowed" : "pointer",
+          fontWeight: 900,
+          cursor: Boolean(disabled) || busy ? "not-allowed" : "pointer",
+          opacity: Boolean(disabled) || busy ? 0.7 : 1,
         }}
       >
-        {label}
+        {busy ? "Advancing…" : "Advance Week"}
       </button>
 
       {status ? (
-        <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 12, opacity: 0.85, whiteSpace: "pre-wrap" }}>
           {status}
         </div>
-      ) : null}
-
-      {summary ? (
-        <details style={{ fontSize: 13 }}>
-          <summary style={{ cursor: "pointer" }}>Processor summary</summary>
-          <pre
-            style={{
-              marginTop: 8,
-              padding: 10,
-              borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.1)",
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
       ) : null}
     </div>
   );
