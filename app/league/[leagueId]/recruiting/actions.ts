@@ -1,93 +1,56 @@
+// app/league/[leagueId]/recruiting/actions.ts
 "use server";
 
-// app/league/[leagueId]/recruiting/actions.ts
 import { revalidatePath } from "next/cache";
-import { supabaseServer } from "../../../../lib/supabaseServer";
+import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 
-export type TryResult = { ok: true } | { ok: false; message: string };
+type AdvanceWeekResult =
+  | { ok: true; message: string; summary: any }
+  | { ok: false; message: string };
 
-type OfferInput = {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-};
+export async function advanceRecruitingWeek(leagueId: string): Promise<AdvanceWeekResult> {
+  if (!leagueId) return { ok: false, message: "Missing leagueId." };
 
-function errMsg(e: unknown) {
-  if (typeof e === "string") return e;
-  if (e && typeof e === "object" && "message" in e) return String((e as any).message);
-  return "Unknown error";
-}
+  const supabase = createSupabaseServerClient();
 
-async function getLeagueSeason(supabase: ReturnType<typeof supabaseServer>, leagueId: string) {
-  const { data, error } = await supabase
+  // Auth
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+
+  if (userErr) return { ok: false, message: userErr.message };
+  if (!user) return { ok: false, message: "Not signed in." };
+
+  // Commissioner check (commissioner_only RPC + belt-and-suspenders guard)
+  const { data: league, error: leagueErr } = await supabase
     .from("leagues")
-    .select("current_season")
+    .select("id, commissioner_id, current_season, current_week")
     .eq("id", leagueId)
-    .maybeSingle();
+    .single();
 
-  if (error) throw error;
-  if (!data) throw new Error("League not found.");
-  return data.current_season ?? 1;
-}
+  if (leagueErr) return { ok: false, message: leagueErr.message };
+  if (!league) return { ok: false, message: "League not found." };
 
-export async function makeOfferAction(input: OfferInput): Promise<TryResult> {
-  try {
-    const { leagueId, teamId, recruitId } = input;
-
-    const supabase = supabaseServer();
-
-    const { data: auth, error: authErr } = await supabase.auth.getUser();
-    if (authErr) return { ok: false, message: authErr.message };
-    if (!auth?.user) return { ok: false, message: "Not authenticated." };
-
-    // ✅ season is NOT NULL in recruiting_offers
-    const season = await getLeagueSeason(supabase, leagueId);
-
-    const { error } = await supabase.from("recruiting_offers").insert({
-      league_id: leagueId,
-      team_id: teamId,
-      recruit_id: recruitId,
-      season,
-    });
-
-    if (error) {
-      // 23505 = unique violation (already offered). Treat as OK.
-      if ((error as any).code === "23505") {
-        revalidatePath(`/league/${leagueId}/recruiting`);
-        return { ok: true };
-      }
-      return { ok: false, message: error.message };
-    }
-
-    revalidatePath(`/league/${leagueId}/recruiting`);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, message: errMsg(e) };
+  if (league.commissioner_id !== user.id) {
+    return { ok: false, message: "Only the commissioner can advance the week." };
   }
-}
 
-export async function removeOfferAction(input: OfferInput): Promise<TryResult> {
-  try {
-    const { leagueId, teamId, recruitId } = input;
+  // Call weekly processor RPC (commissioner_only=true per your context)
+  const { data: summary, error: rpcErr } = await supabase.rpc(
+    "process_recruiting_week_v1",
+    { p_league_id: leagueId }
+  );
 
-    const supabase = supabaseServer();
+  if (rpcErr) return { ok: false, message: rpcErr.message };
 
-    const { data: auth, error: authErr } = await supabase.auth.getUser();
-    if (authErr) return { ok: false, message: authErr.message };
-    if (!auth?.user) return { ok: false, message: "Not authenticated." };
+  // Revalidate the recruiting page (and league shell if you have one)
+  revalidatePath(`/league/${leagueId}/recruiting`);
+  revalidatePath(`/league/${leagueId}`);
 
-    const { error } = await supabase
-      .from("recruiting_offers")
-      .delete()
-      .eq("league_id", leagueId)
-      .eq("team_id", teamId)
-      .eq("recruit_id", recruitId);
-
-    if (error) return { ok: false, message: error.message };
-
-    revalidatePath(`/league/${leagueId}/recruiting`);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, message: errMsg(e) };
-  }
+  return {
+    ok: true,
+    message: "Week advanced successfully.",
+    summary,
+  };
 }
