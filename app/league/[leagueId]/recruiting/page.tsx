@@ -35,11 +35,12 @@ export default async function RecruitingPage({
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 18 }}>Recruiting</div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Recruiting</div>
             <div style={{ fontSize: 13, opacity: 0.75 }}>
               Season {league?.current_season ?? "—"} · Week {league?.current_week ?? "—"}
             </div>
           </div>
+
           <div style={{ minWidth: 180 }}>
             <AdvanceWeekButton leagueId={leagueId} disabled={!isCommissioner} />
           </div>
@@ -52,13 +53,13 @@ export default async function RecruitingPage({
         ) : null}
       </div>
 
-      {/* TODO: your existing recruit list UI goes here */}
+      {/* Keep / replace this with your actual recruit list UI */}
       <div
         style={{
           padding: 14,
           borderRadius: 14,
           border: "1px dashed rgba(0,0,0,0.20)",
-          opacity: 0.8,
+          opacity: 0.85,
         }}
       >
         Recruit list component goes here (keep your current implementation).
