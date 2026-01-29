@@ -14,7 +14,10 @@ function reqEnv(name: string) {
 
 function supabaseServer() {
   const cookieStore = cookies();
-  return createServerClient(reqEnv("NEXT_PUBLIC_SUPABASE_URL"), reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+  const url = reqEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const anon = reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
+  return createServerClient(url, anon, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -48,12 +51,16 @@ async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leag
       return map;
     }
   }
-
   return {};
 }
 
 export default async function RecruitingPage({ params }: { params: { leagueId: string } }) {
   const leagueId = params.leagueId;
+
+  // Grab env ON SERVER and pass to client (avoids client env issues)
+  const supabaseUrl = reqEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseAnonKey = reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
   const supabase = supabaseServer();
 
   // Auth
@@ -84,7 +91,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
   const currentSeason = Number(league.current_season ?? 1);
   const currentWeek = Number(league.current_week ?? 1);
 
-  // ✅ Use the paged overload so signature always matches
+  // Recruits (paged overload)
   const PAGE_LIMIT = 250;
   const { data: recruitRows, error: recruitErr } = await supabase.rpc("get_recruit_list_v1", {
     p_league_id: leagueId,
@@ -102,7 +109,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     .filter(Boolean)
     .map((x) => String(x));
 
-  // ✅ BOARD: fetch my board ids for this season
+  // Board ids
   let boardIds = new Set<string>();
   {
     const { data: boardRows, error: bErr } = await supabase
@@ -117,7 +124,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Interests (Top 8 + my interest)
+  // Interest rows
   let interests: Array<{ recruit_id: string; team_id: string; interest: number }> = [];
   if (recruitIds.length > 0) {
     const { data: interestRows, error: intErr } = await supabase
@@ -167,6 +174,8 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
       </div>
 
       <RecruitingClient
+        supabaseUrl={supabaseUrl}
+        supabaseAnonKey={supabaseAnonKey}
         leagueId={leagueId}
         teamId={teamId}
         recruits={hydrated}
