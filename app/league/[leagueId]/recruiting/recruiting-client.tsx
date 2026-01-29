@@ -14,6 +14,7 @@ type Recruit = Record<string, any> & {
   _recruit_id: string;
   my_interest?: number;
   top8?: Top8Entry[];
+  on_board?: boolean;
 };
 
 function reqEnv(name: string) {
@@ -46,7 +47,9 @@ function InterestBar({ value }: { value: number }) {
       >
         <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.65)" }} />
       </div>
-      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>{v}</div>
+      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>
+        {v}
+      </div>
     </div>
   );
 }
@@ -99,8 +102,61 @@ async function toggleOffer(opts: {
       .eq("team_id", opts.teamId)
       .eq("recruit_id", opts.recruitId)
       .eq("season", opts.season);
+
     if (error) throw new Error(error.message);
   }
+}
+
+async function toggleBoard(opts: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+  season: number;
+  add: boolean;
+}) {
+  const supabase = supabaseBrowser();
+
+  if (opts.add) {
+    const { error } = await supabase.from("recruiting_board").insert({
+      league_id: opts.leagueId,
+      team_id: opts.teamId,
+      recruit_id: opts.recruitId,
+      season: opts.season,
+    });
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase
+      .from("recruiting_board")
+      .delete()
+      .eq("league_id", opts.leagueId)
+      .eq("team_id", opts.teamId)
+      .eq("recruit_id", opts.recruitId)
+      .eq("season", opts.season);
+
+    if (error) throw new Error(error.message);
+  }
+}
+
+function PillButton(props: {
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={props.onClick}
+      style={{
+        padding: "10px 12px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.15)",
+        background: props.active ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
+        cursor: "pointer",
+        fontWeight: 800,
+      }}
+    >
+      {props.children}
+    </button>
+  );
 }
 
 export default function RecruitingClient(props: {
@@ -114,15 +170,25 @@ export default function RecruitingClient(props: {
   const [busy, setBusy] = React.useState<Record<string, boolean>>({});
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<"interest" | "stars" | "name">("interest");
+  const [view, setView] = React.useState<"all" | "board">("all");
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
+  const boardCount = React.useMemo(() => rows.filter((r) => Boolean(r.on_board)).length, [rows]);
+
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = rows;
+
+    if (view === "board") list = list.filter((r) => Boolean(r.on_board));
+
     if (q) {
-      list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
+      list = list.filter((r) => {
+        const name = getName(r).toLowerCase();
+        const pos = String(getPos(r)).toLowerCase();
+        return name.includes(q) || pos.includes(q);
+      });
     }
 
     return list.slice().sort((a, b) => {
@@ -130,7 +196,7 @@ export default function RecruitingClient(props: {
       if (sort === "stars") return Number(getStars(b) || 0) - Number(getStars(a) || 0);
       return getName(a).localeCompare(getName(b));
     });
-  }, [rows, query, sort]);
+  }, [rows, query, sort, view]);
 
   async function onToggleOffer(r: Recruit) {
     const rid = r._recruit_id;
@@ -139,7 +205,6 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
-    // optimistic flip
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -157,7 +222,6 @@ export default function RecruitingClient(props: {
         makeOffer: !wasOffered,
       });
     } catch (e: any) {
-      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
@@ -171,9 +235,45 @@ export default function RecruitingClient(props: {
     }
   }
 
+  async function onToggleBoard(r: Recruit) {
+    const rid = r._recruit_id;
+    const wasOn = Boolean(r.on_board);
+
+    setError(null);
+    setBusy((m) => ({ ...m, [`board:${rid}`]: true }));
+
+    // optimistic
+    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: !wasOn } : x)));
+
+    try {
+      await toggleBoard({
+        leagueId: props.leagueId,
+        teamId: props.teamId,
+        recruitId: rid,
+        season: props.currentSeason,
+        add: !wasOn,
+      });
+    } catch (e: any) {
+      // revert
+      setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: wasOn } : x)));
+      setError(e?.message ?? "Failed to update board.");
+    } finally {
+      setBusy((m) => ({ ...m, [`board:${rid}`]: false }));
+    }
+  }
+
   return (
     <div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        <PillButton active={view === "all"} onClick={() => setView("all")}>
+          All Recruits
+        </PillButton>
+        <PillButton active={view === "board"} onClick={() => setView("board")}>
+          My Board ({boardCount})
+        </PillButton>
+
+        <div style={{ flex: 1 }} />
+
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -221,7 +321,7 @@ export default function RecruitingClient(props: {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "26px 1.4fr 90px 90px 220px 140px",
+            gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
             gap: 10,
             padding: "10px 12px",
             fontWeight: 800,
@@ -234,6 +334,7 @@ export default function RecruitingClient(props: {
           <div>Pos</div>
           <div>Stars</div>
           <div>My Interest</div>
+          <div>Board</div>
           <div />
         </div>
 
@@ -243,13 +344,14 @@ export default function RecruitingClient(props: {
           const offered = getOfferFlag(r);
           const top8 = Array.isArray(r.top8) ? (r.top8 as Top8Entry[]) : [];
           const myInterest = Number(r.my_interest ?? 0);
+          const onBoard = Boolean(r.on_board);
 
           return (
             <div key={rid} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "26px 1.4fr 90px 90px 220px 140px",
+                  gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
                   gap: 10,
                   padding: "10px 12px",
                   alignItems: "center",
@@ -280,6 +382,21 @@ export default function RecruitingClient(props: {
                 <InterestBar value={myInterest} />
 
                 <button
+                  onClick={() => onToggleBoard(r)}
+                  disabled={Boolean(busy[`board:${rid}`])}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    background: onBoard ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
+                    cursor: busy[`board:${rid}`] ? "not-allowed" : "pointer",
+                    fontWeight: 800,
+                  }}
+                >
+                  {busy[`board:${rid}`] ? "…" : onBoard ? "On Board" : "Add"}
+                </button>
+
+                <button
                   onClick={() => onToggleOffer(r)}
                   disabled={Boolean(busy[rid])}
                   style={{
@@ -306,7 +423,6 @@ export default function RecruitingClient(props: {
                       style={{
                         display: "grid",
                         gridTemplateColumns: "1fr 90px",
-                        gap: 0,
                         maxWidth: 560,
                         border: "1px solid rgba(255,255,255,0.10)",
                         borderRadius: 12,
