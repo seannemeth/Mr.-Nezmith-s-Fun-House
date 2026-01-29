@@ -17,16 +17,6 @@ type Recruit = Record<string, any> & {
   on_board?: boolean;
 };
 
-function reqEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
-}
-
-function supabaseBrowser() {
-  return createBrowserClient(reqEnv("NEXT_PUBLIC_SUPABASE_URL"), reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"));
-}
-
 function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
 }
@@ -47,9 +37,7 @@ function InterestBar({ value }: { value: number }) {
       >
         <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.65)" }} />
       </div>
-      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>
-        {v}
-      </div>
+      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>{v}</div>
     </div>
   );
 }
@@ -77,71 +65,7 @@ function getOfferFlag(r: Recruit) {
   return Boolean(r.offer_made ?? r.has_offer ?? r.offered ?? r.offer ?? false);
 }
 
-async function toggleOffer(opts: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-  season: number;
-  makeOffer: boolean;
-}) {
-  const supabase = supabaseBrowser();
-
-  if (opts.makeOffer) {
-    const { error } = await supabase.from("recruiting_offers").insert({
-      league_id: opts.leagueId,
-      team_id: opts.teamId,
-      recruit_id: opts.recruitId,
-      season: opts.season,
-    });
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase
-      .from("recruiting_offers")
-      .delete()
-      .eq("league_id", opts.leagueId)
-      .eq("team_id", opts.teamId)
-      .eq("recruit_id", opts.recruitId)
-      .eq("season", opts.season);
-
-    if (error) throw new Error(error.message);
-  }
-}
-
-async function toggleBoard(opts: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-  season: number;
-  add: boolean;
-}) {
-  const supabase = supabaseBrowser();
-
-  if (opts.add) {
-    const { error } = await supabase.from("recruiting_board").insert({
-      league_id: opts.leagueId,
-      team_id: opts.teamId,
-      recruit_id: opts.recruitId,
-      season: opts.season,
-    });
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase
-      .from("recruiting_board")
-      .delete()
-      .eq("league_id", opts.leagueId)
-      .eq("team_id", opts.teamId)
-      .eq("recruit_id", opts.recruitId)
-      .eq("season", opts.season);
-
-    if (error) throw new Error(error.message);
-  }
-}
-
-function PillButton(props: {
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function PillButton(props: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={props.onClick}
@@ -160,11 +84,20 @@ function PillButton(props: {
 }
 
 export default function RecruitingClient(props: {
+  // ✅ passed from server so we never rely on client env vars
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+
   leagueId: string;
   teamId: string;
   recruits: Recruit[];
   currentSeason: number;
 }) {
+  const supabase = React.useMemo(
+    () => createBrowserClient(props.supabaseUrl, props.supabaseAnonKey),
+    [props.supabaseUrl, props.supabaseAnonKey]
+  );
+
   const [rows, setRows] = React.useState<Recruit[]>(props.recruits ?? []);
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [busy, setBusy] = React.useState<Record<string, boolean>>({});
@@ -184,11 +117,7 @@ export default function RecruitingClient(props: {
     if (view === "board") list = list.filter((r) => Boolean(r.on_board));
 
     if (q) {
-      list = list.filter((r) => {
-        const name = getName(r).toLowerCase();
-        const pos = String(getPos(r)).toLowerCase();
-        return name.includes(q) || pos.includes(q);
-      });
+      list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
     }
 
     return list.slice().sort((a, b) => {
@@ -214,13 +143,24 @@ export default function RecruitingClient(props: {
     );
 
     try {
-      await toggleOffer({
-        leagueId: props.leagueId,
-        teamId: props.teamId,
-        recruitId: rid,
-        season: props.currentSeason,
-        makeOffer: !wasOffered,
-      });
+      if (!wasOffered) {
+        const { error: insErr } = await supabase.from("recruiting_offers").insert({
+          league_id: props.leagueId,
+          team_id: props.teamId,
+          recruit_id: rid,
+          season: props.currentSeason,
+        });
+        if (insErr) throw new Error(insErr.message);
+      } else {
+        const { error: delErr } = await supabase
+          .from("recruiting_offers")
+          .delete()
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .eq("recruit_id", rid)
+          .eq("season", props.currentSeason);
+        if (delErr) throw new Error(delErr.message);
+      }
     } catch (e: any) {
       setRows((prev) =>
         prev.map((x) =>
@@ -242,19 +182,28 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`board:${rid}`]: true }));
 
-    // optimistic
     setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: !wasOn } : x)));
 
     try {
-      await toggleBoard({
-        leagueId: props.leagueId,
-        teamId: props.teamId,
-        recruitId: rid,
-        season: props.currentSeason,
-        add: !wasOn,
-      });
+      if (!wasOn) {
+        const { error: insErr } = await supabase.from("recruiting_board").insert({
+          league_id: props.leagueId,
+          team_id: props.teamId,
+          recruit_id: rid,
+          season: props.currentSeason,
+        });
+        if (insErr) throw new Error(insErr.message);
+      } else {
+        const { error: delErr } = await supabase
+          .from("recruiting_board")
+          .delete()
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .eq("recruit_id", rid)
+          .eq("season", props.currentSeason);
+        if (delErr) throw new Error(delErr.message);
+      }
     } catch (e: any) {
-      // revert
       setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: wasOn } : x)));
       setError(e?.message ?? "Failed to update board.");
     } finally {
