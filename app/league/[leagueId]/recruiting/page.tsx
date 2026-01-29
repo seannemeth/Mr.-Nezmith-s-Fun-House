@@ -31,7 +31,6 @@ function supabaseServer() {
 }
 
 async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leagueId: string) {
-  // Tolerant: tries likely team tables and name fields.
   const attempts: Array<{ table: string; select: string; leagueCol: string }> = [
     { table: "teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
     { table: "league_teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
@@ -85,16 +84,8 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
   const currentSeason = Number(league.current_season ?? 1);
   const currentWeek = Number(league.current_week ?? 1);
 
-  /**
-   * ✅ IMPORTANT:
-   * You have two overloads:
-   * - get_recruit_list_v1(league_id uuid, team_id uuid)
-   * - get_recruit_list_v1(p_league_id uuid, p_limit int, p_offset int, p_only_uncommitted bool, p_team_id uuid)
-   *
-   * This page uses the PAGED overload, so we always match a signature.
-   */
+  // ✅ Use the paged overload so signature always matches
   const PAGE_LIMIT = 250;
-
   const { data: recruitRows, error: recruitErr } = await supabase.rpc("get_recruit_list_v1", {
     p_league_id: leagueId,
     p_team_id: teamId,
@@ -106,13 +97,27 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
   if (recruitErr) throw new Error(recruitErr.message);
 
   const recruits: RecruitRow[] = Array.isArray(recruitRows) ? recruitRows : [];
-
   const recruitIds = recruits
     .map((r) => r.id ?? r.recruit_id)
     .filter(Boolean)
     .map((x) => String(x));
 
-  // Pull interests for all teams for these recruits (to compute Top 8 + my interest)
+  // ✅ BOARD: fetch my board ids for this season
+  let boardIds = new Set<string>();
+  {
+    const { data: boardRows, error: bErr } = await supabase
+      .from("recruiting_board")
+      .select("recruit_id")
+      .eq("league_id", leagueId)
+      .eq("team_id", teamId)
+      .eq("season", currentSeason);
+
+    if (!bErr && Array.isArray(boardRows)) {
+      boardIds = new Set(boardRows.map((x: any) => String(x.recruit_id)));
+    }
+  }
+
+  // Interests (Top 8 + my interest)
   let interests: Array<{ recruit_id: string; team_id: string; interest: number }> = [];
   if (recruitIds.length > 0) {
     const { data: interestRows, error: intErr } = await supabase
@@ -132,13 +137,9 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
 
   const teamNameById = await loadTeamNameMap(supabase, leagueId);
 
-  // Group interests by recruit
   const byRecruit: Record<string, Array<{ team_id: string; interest: number }>> = {};
-  for (const row of interests) {
-    (byRecruit[row.recruit_id] ??= []).push({ team_id: row.team_id, interest: row.interest });
-  }
+  for (const row of interests) (byRecruit[row.recruit_id] ??= []).push({ team_id: row.team_id, interest: row.interest });
 
-  // Hydrate each recruit with { my_interest, top8[] }
   const hydrated = recruits.map((r) => {
     const rid = String(r.id ?? r.recruit_id ?? "");
     const list = (byRecruit[rid] ?? []).slice().sort((a, b) => b.interest - a.interest);
@@ -154,6 +155,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
       _recruit_id: rid,
       my_interest: mine,
       top8,
+      on_board: boardIds.has(rid),
     };
   });
 
