@@ -93,12 +93,14 @@ export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
 
   // 1) Insert (or ignore) the offer
   // NOTE: requires unique (league_id, season, team_id, recruit_id) on recruiting_offers
-  const { error: offerErr } = await supabase.from("recruiting_offers").upsert(
-    {
-      league_id: leagueId,
-      team_id: teamId,
-      recruit_id: recruitId,
-      season: league.current_season,
+  const { data, error } = await supabase.rpc("make_recruiting_offer_v1", {
+    p_league_id: leagueId,
+    p_team_id: teamId,
+    p_recruit_id: recruitId,
+  });
+
+  if (error) return { ok: false, message: error.message };
+
       // weekly_boost optional: if column exists in your table, you can set it here.
       // weekly_boost: 1,
     },
