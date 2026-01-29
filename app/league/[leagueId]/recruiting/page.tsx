@@ -6,7 +6,7 @@ import RecruitingClient from "./recruiting-client";
 
 type RecruitRow = Record<string, any>;
 
-function getEnv(name: string) {
+function reqEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
@@ -14,7 +14,7 @@ function getEnv(name: string) {
 
 function supabaseServer() {
   const cookieStore = cookies();
-  return createServerClient(getEnv("NEXT_PUBLIC_SUPABASE_URL"), getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+  return createServerClient(reqEnv("NEXT_PUBLIC_SUPABASE_URL"), reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -23,7 +23,7 @@ function supabaseServer() {
         try {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
         } catch {
-          // Server Components may not be allowed to set cookies in some contexts; ignore.
+          // ignore (RSC cookie limitations)
         }
       },
     },
@@ -31,38 +31,38 @@ function supabaseServer() {
 }
 
 async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leagueId: string) {
-  // Try common table names; keep it tolerant.
-  // Expected shape: { id, name } per team for this league.
-  const attempts: Array<{ table: string; select: string }> = [
-    { table: "teams", select: "id,name,league_id" },
-    { table: "league_teams", select: "id,name,league_id" },
+  // Tolerant: tries likely team tables and name fields.
+  const attempts: Array<{ table: string; select: string; leagueCol: string }> = [
+    { table: "teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
+    { table: "league_teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
   ];
 
   for (const a of attempts) {
-    const { data, error } = await supabase.from(a.table).select(a.select).eq("league_id", leagueId);
-    if (!error && data && Array.isArray(data)) {
+    const { data, error } = await supabase.from(a.table).select(a.select).eq(a.leagueCol, leagueId);
+    if (!error && Array.isArray(data)) {
       const map: Record<string, string> = {};
-      for (const t of data as any[]) map[String(t.id)] = String(t.name ?? t.school_name ?? t.display_name ?? "Unknown");
+      for (const t of data as any[]) {
+        const id = String(t.id);
+        const name = String(t.name ?? t.school_name ?? t.display_name ?? "Unknown");
+        map[id] = name;
+      }
       return map;
     }
   }
+
   return {};
 }
 
 export default async function RecruitingPage({ params }: { params: { leagueId: string } }) {
   const leagueId = params.leagueId;
-
   const supabase = supabaseServer();
 
   // Auth
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+  const { data: userRes, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !userRes?.user) redirect("/login");
+  const user = userRes.user;
 
-  if (userErr || !user) redirect("/login");
-
-  // Find membership/team
+  // Membership -> team
   const { data: membership, error: memErr } = await supabase
     .from("memberships")
     .select("team_id,league_id")
@@ -71,10 +71,9 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     .maybeSingle();
 
   if (memErr || !membership?.team_id) redirect(`/league/${leagueId}`);
-
   const teamId = String(membership.team_id);
 
-  // League season/week (season is required for offers insert)
+  // League season/week
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
     .select("id,current_season,current_week")
@@ -82,13 +81,26 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     .maybeSingle();
 
   if (leagueErr || !league) throw new Error("League not found.");
+
   const currentSeason = Number(league.current_season ?? 1);
   const currentWeek = Number(league.current_week ?? 1);
 
-  // Recruits list (your existing tolerant RPC)
+  /**
+   * ✅ IMPORTANT:
+   * You have two overloads:
+   * - get_recruit_list_v1(league_id uuid, team_id uuid)
+   * - get_recruit_list_v1(p_league_id uuid, p_limit int, p_offset int, p_only_uncommitted bool, p_team_id uuid)
+   *
+   * This page uses the PAGED overload, so we always match a signature.
+   */
+  const PAGE_LIMIT = 250;
+
   const { data: recruitRows, error: recruitErr } = await supabase.rpc("get_recruit_list_v1", {
     p_league_id: leagueId,
     p_team_id: teamId,
+    p_limit: PAGE_LIMIT,
+    p_offset: 0,
+    p_only_uncommitted: true,
   });
 
   if (recruitErr) throw new Error(recruitErr.message);
@@ -100,7 +112,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     .filter(Boolean)
     .map((x) => String(x));
 
-  // Interests for these recruits across ALL teams (to build Top 8 + my interest)
+  // Pull interests for all teams for these recruits (to compute Top 8 + my interest)
   let interests: Array<{ recruit_id: string; team_id: string; interest: number }> = [];
   if (recruitIds.length > 0) {
     const { data: interestRows, error: intErr } = await supabase
@@ -118,15 +130,15 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Team names (for Top 8 display)
   const teamNameById = await loadTeamNameMap(supabase, leagueId);
 
-  // Hydrate each recruit with: my_interest + top8[]
+  // Group interests by recruit
   const byRecruit: Record<string, Array<{ team_id: string; interest: number }>> = {};
   for (const row of interests) {
     (byRecruit[row.recruit_id] ??= []).push({ team_id: row.team_id, interest: row.interest });
   }
 
+  // Hydrate each recruit with { my_interest, top8[] }
   const hydrated = recruits.map((r) => {
     const rid = String(r.id ?? r.recruit_id ?? "");
     const list = (byRecruit[rid] ?? []).slice().sort((a, b) => b.interest - a.interest);
@@ -147,7 +159,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
 
   return (
     <div style={{ padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Recruiting</h1>
+      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>Recruiting</h1>
       <div style={{ opacity: 0.8, marginBottom: 14 }}>
         Season {currentSeason} • Week {currentWeek}
       </div>
