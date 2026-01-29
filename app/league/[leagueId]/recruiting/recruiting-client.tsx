@@ -24,20 +24,22 @@ function clamp(n: number, min = 0, max = 100) {
 function InterestBar({ value }: { value: number }) {
   const v = clamp(Number(value ?? 0));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 170 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
       <div
         style={{
-          width: 125,
+          width: 130,
           height: 10,
           borderRadius: 999,
           background: "rgba(255,255,255,0.10)",
           overflow: "hidden",
-          border: "1px solid rgba(255,255,255,0.12)",
+          border: "1px solid rgba(255,255,255,0.16)",
         }}
       >
-        <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.65)" }} />
+        <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.78)" }} />
       </div>
-      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>{v}</div>
+      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right", color: "rgba(255,255,255,0.92)" }}>
+        {v}
+      </div>
     </div>
   );
 }
@@ -72,8 +74,9 @@ function PillButton(props: { active?: boolean; onClick: () => void; children: Re
       style={{
         padding: "10px 12px",
         borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.15)",
-        background: props.active ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: props.active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+        color: "rgba(255,255,255,0.95)",
         cursor: "pointer",
         fontWeight: 800,
       }}
@@ -83,11 +86,52 @@ function PillButton(props: { active?: boolean; onClick: () => void; children: Re
   );
 }
 
+function ActionButton(props: {
+  variant: "primary" | "secondary" | "neutral";
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const base = {
+    padding: "10px 12px",
+    borderRadius: 10,
+    fontWeight: 900 as const,
+    letterSpacing: "0.2px",
+    border: "1px solid rgba(255,255,255,0.18)",
+    cursor: props.disabled ? "not-allowed" : "pointer",
+    opacity: props.disabled ? 0.65 : 1,
+    color: "rgba(255,255,255,0.98)",
+  };
+
+  const variants: Record<string, React.CSSProperties> = {
+    primary: {
+      background: "rgba(80, 160, 255, 0.35)",
+      border: "1px solid rgba(120, 190, 255, 0.45)",
+    },
+    secondary: {
+      background: "rgba(255, 255, 255, 0.16)",
+      border: "1px solid rgba(255, 255, 255, 0.22)",
+    },
+    neutral: {
+      background: "rgba(255, 255, 255, 0.10)",
+      border: "1px solid rgba(255, 255, 255, 0.16)",
+    },
+  };
+
+  return (
+    <button
+      onClick={props.onClick}
+      disabled={props.disabled}
+      style={{ ...base, ...variants[props.variant] }}
+    >
+      {props.children}
+    </button>
+  );
+}
+
 export default function RecruitingClient(props: {
-  // ✅ passed from server so we never rely on client env vars
   supabaseUrl: string;
   supabaseAnonKey: string;
-
   leagueId: string;
   teamId: string;
   recruits: Recruit[];
@@ -105,6 +149,7 @@ export default function RecruitingClient(props: {
   const [sort, setSort] = React.useState<"interest" | "stars" | "name">("interest");
   const [view, setView] = React.useState<"all" | "board">("all");
   const [error, setError] = React.useState<string | null>(null);
+  const [hover, setHover] = React.useState<string | null>(null);
 
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
@@ -117,7 +162,9 @@ export default function RecruitingClient(props: {
     if (view === "board") list = list.filter((r) => Boolean(r.on_board));
 
     if (q) {
-      list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
+      list = list.filter(
+        (r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q)
+      );
     }
 
     return list.slice().sort((a, b) => {
@@ -212,7 +259,7 @@ export default function RecruitingClient(props: {
   }
 
   return (
-    <div>
+    <div style={{ color: "rgba(255,255,255,0.94)" }}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         <PillButton active={view === "all"} onClick={() => setView("all")}>
           All Recruits
@@ -230,9 +277,11 @@ export default function RecruitingClient(props: {
           style={{
             padding: "10px 12px",
             borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "rgba(0,0,0,0.15)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: "rgba(255,255,255,0.06)",
+            color: "rgba(255,255,255,0.92)",
             minWidth: 260,
+            outline: "none",
           }}
         />
 
@@ -242,8 +291,10 @@ export default function RecruitingClient(props: {
           style={{
             padding: "10px 12px",
             borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "rgba(0,0,0,0.15)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: "rgba(255,255,255,0.06)",
+            color: "rgba(255,255,255,0.92)",
+            outline: "none",
           }}
         >
           <option value="interest">Sort: My Interest</option>
@@ -257,25 +308,28 @@ export default function RecruitingClient(props: {
           style={{
             marginBottom: 12,
             padding: 10,
-            borderRadius: 10,
-            border: "1px solid rgba(255,120,120,0.35)",
-            background: "rgba(255,0,0,0.08)",
+            borderRadius: 12,
+            border: "1px solid rgba(255,120,120,0.45)",
+            background: "rgba(255,0,0,0.10)",
+            color: "rgba(255,230,230,0.95)",
+            fontWeight: 700,
           }}
         >
           {error}
         </div>
       ) : null}
 
-      <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 16, overflow: "hidden" }}>
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
             gap: 10,
             padding: "10px 12px",
-            fontWeight: 800,
-            background: "rgba(255,255,255,0.06)",
-            borderBottom: "1px solid rgba(255,255,255,0.10)",
+            fontWeight: 900,
+            background: "rgba(255,255,255,0.10)",
+            borderBottom: "1px solid rgba(255,255,255,0.12)",
+            color: "rgba(255,255,255,0.95)",
           }}
         >
           <div />
@@ -294,87 +348,75 @@ export default function RecruitingClient(props: {
           const top8 = Array.isArray(r.top8) ? (r.top8 as Top8Entry[]) : [];
           const myInterest = Number(r.my_interest ?? 0);
           const onBoard = Boolean(r.on_board);
+          const rowHover = hover === rid;
 
           return (
             <div key={rid} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <div
+                onMouseEnter={() => setHover(rid)}
+                onMouseLeave={() => setHover(null)}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
                   gap: 10,
                   padding: "10px 12px",
                   alignItems: "center",
+                  background: rowHover ? "rgba(255,255,255,0.05)" : "transparent",
                 }}
               >
                 <button
                   onClick={() => setExpanded((m) => ({ ...m, [rid]: !open }))}
                   aria-label={open ? "Collapse" : "Expand"}
                   style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 8,
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    background: "rgba(0,0,0,0.15)",
+                    width: 24,
+                    height: 24,
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.95)",
                     cursor: "pointer",
+                    fontWeight: 900,
                   }}
                 >
                   {open ? "–" : "+"}
                 </button>
 
                 <div style={{ display: "flex", flexDirection: "column" }}>
-                  <div style={{ fontWeight: 700 }}>{getName(r)}</div>
-                  <div style={{ opacity: 0.75, fontSize: 12 }}>{rid}</div>
+                  <div style={{ fontWeight: 850, color: "rgba(255,255,255,0.96)" }}>{getName(r)}</div>
+                  <div style={{ opacity: 0.78, fontSize: 12 }}>{rid}</div>
                 </div>
 
-                <div>{getPos(r)}</div>
-                <div>{getStars(r)}</div>
+                <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getPos(r)}</div>
+                <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getStars(r)}</div>
                 <InterestBar value={myInterest} />
 
-                <button
+                <ActionButton
+                  variant="secondary"
                   onClick={() => onToggleBoard(r)}
                   disabled={Boolean(busy[`board:${rid}`])}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    background: onBoard ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
-                    cursor: busy[`board:${rid}`] ? "not-allowed" : "pointer",
-                    fontWeight: 800,
-                  }}
                 >
                   {busy[`board:${rid}`] ? "…" : onBoard ? "On Board" : "Add"}
-                </button>
+                </ActionButton>
 
-                <button
-                  onClick={() => onToggleOffer(r)}
-                  disabled={Boolean(busy[rid])}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    background: offered ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
-                    cursor: busy[rid] ? "not-allowed" : "pointer",
-                    fontWeight: 800,
-                  }}
-                >
+                <ActionButton variant="primary" onClick={() => onToggleOffer(r)} disabled={Boolean(busy[rid])}>
                   {busy[rid] ? "…" : offered ? "Remove Offer" : "Make Offer"}
-                </button>
+                </ActionButton>
               </div>
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px" }}>
-                  <div style={{ fontWeight: 800, marginBottom: 8 }}>Top 8</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Top 8</div>
 
                   {top8.length === 0 ? (
-                    <div style={{ opacity: 0.8 }}>No interest data yet.</div>
+                    <div style={{ opacity: 0.85 }}>No interest data yet.</div>
                   ) : (
                     <div
                       style={{
                         display: "grid",
                         gridTemplateColumns: "1fr 90px",
                         maxWidth: 560,
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        borderRadius: 14,
                         overflow: "hidden",
                       }}
                     >
@@ -384,8 +426,8 @@ export default function RecruitingClient(props: {
                           display: "grid",
                           gridTemplateColumns: "1fr 90px",
                           padding: "8px 10px",
-                          background: "rgba(255,255,255,0.06)",
-                          fontWeight: 800,
+                          background: "rgba(255,255,255,0.10)",
+                          fontWeight: 900,
                         }}
                       >
                         <div>School</div>
@@ -394,7 +436,7 @@ export default function RecruitingClient(props: {
 
                       {top8.map((t, idx) => (
                         <React.Fragment key={`${rid}:${t.team_id}:${idx}`}>
-                          <div style={{ padding: "8px 10px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                          <div style={{ padding: "8px 10px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                             {t.team_name}
                           </div>
                           <div
@@ -402,7 +444,7 @@ export default function RecruitingClient(props: {
                               padding: "8px 10px",
                               textAlign: "right",
                               fontVariantNumeric: "tabular-nums",
-                              borderTop: "1px solid rgba(255,255,255,0.06)",
+                              borderTop: "1px solid rgba(255,255,255,0.08)",
                             }}
                           >
                             {clamp(Number(t.interest ?? 0))}
