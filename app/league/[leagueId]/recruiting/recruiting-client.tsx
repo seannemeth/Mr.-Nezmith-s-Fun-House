@@ -16,14 +16,14 @@ type Recruit = Record<string, any> & {
   top8?: Top8Entry[];
 };
 
-function getEnv(name: string) {
+function reqEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
 }
 
 function supabaseBrowser() {
-  return createBrowserClient(getEnv("NEXT_PUBLIC_SUPABASE_URL"), getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"));
+  return createBrowserClient(reqEnv("NEXT_PUBLIC_SUPABASE_URL"), reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"));
 }
 
 function clamp(n: number, min = 0, max = 100) {
@@ -33,10 +33,10 @@ function clamp(n: number, min = 0, max = 100) {
 function InterestBar({ value }: { value: number }) {
   const v = clamp(Number(value ?? 0));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 160 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 170 }}>
       <div
         style={{
-          width: 120,
+          width: 125,
           height: 10,
           borderRadius: 999,
           background: "rgba(255,255,255,0.10)",
@@ -44,49 +44,11 @@ function InterestBar({ value }: { value: number }) {
           border: "1px solid rgba(255,255,255,0.12)",
         }}
       >
-        <div
-          style={{
-            width: `${v}%`,
-            height: "100%",
-            background: "rgba(255,255,255,0.65)",
-          }}
-        />
+        <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.65)" }} />
       </div>
       <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right" }}>{v}</div>
     </div>
   );
-}
-
-async function toggleOfferServerless(opts: {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-  season: number;
-  makeOffer: boolean;
-}) {
-  // Client-side write is okay only if your RLS is strict (you already set that up).
-  // If you prefer server actions only, tell me your existing action file path and
-  // I’ll convert this back to server actions.
-  const supabase = supabaseBrowser();
-
-  if (opts.makeOffer) {
-    const { error } = await supabase.from("recruiting_offers").insert({
-      league_id: opts.leagueId,
-      team_id: opts.teamId,
-      recruit_id: opts.recruitId,
-      season: opts.season,
-    });
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase
-      .from("recruiting_offers")
-      .delete()
-      .eq("league_id", opts.leagueId)
-      .eq("team_id", opts.teamId)
-      .eq("recruit_id", opts.recruitId)
-      .eq("season", opts.season);
-    if (error) throw new Error(error.message);
-  }
 }
 
 function getName(r: Recruit) {
@@ -109,8 +71,36 @@ function getStars(r: Recruit) {
 }
 
 function getOfferFlag(r: Recruit) {
-  // tolerate multiple spellings from RPC
   return Boolean(r.offer_made ?? r.has_offer ?? r.offered ?? r.offer ?? false);
+}
+
+async function toggleOffer(opts: {
+  leagueId: string;
+  teamId: string;
+  recruitId: string;
+  season: number;
+  makeOffer: boolean;
+}) {
+  const supabase = supabaseBrowser();
+
+  if (opts.makeOffer) {
+    const { error } = await supabase.from("recruiting_offers").insert({
+      league_id: opts.leagueId,
+      team_id: opts.teamId,
+      recruit_id: opts.recruitId,
+      season: opts.season,
+    });
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase
+      .from("recruiting_offers")
+      .delete()
+      .eq("league_id", opts.leagueId)
+      .eq("team_id", opts.teamId)
+      .eq("recruit_id", opts.recruitId)
+      .eq("season", opts.season);
+    if (error) throw new Error(error.message);
+  }
 }
 
 export default function RecruitingClient(props: {
@@ -126,60 +116,52 @@ export default function RecruitingClient(props: {
   const [sort, setSort] = React.useState<"interest" | "stars" | "name">("interest");
   const [error, setError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    setRows(props.recruits ?? []);
-  }, [props.recruits]);
+  React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = rows;
     if (q) {
-      list = list.filter((r) => {
-        const name = getName(r).toLowerCase();
-        const pos = String(getPos(r)).toLowerCase();
-        return name.includes(q) || pos.includes(q);
-      });
+      list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
     }
 
-    const sorted = list.slice().sort((a, b) => {
+    return list.slice().sort((a, b) => {
       if (sort === "interest") return Number(b.my_interest ?? 0) - Number(a.my_interest ?? 0);
       if (sort === "stars") return Number(getStars(b) || 0) - Number(getStars(a) || 0);
       return getName(a).localeCompare(getName(b));
     });
-
-    return sorted;
   }, [rows, query, sort]);
 
   async function onToggleOffer(r: Recruit) {
     const rid = r._recruit_id;
-    const isOffered = getOfferFlag(r);
+    const wasOffered = getOfferFlag(r);
 
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
-    // optimistic update
+    // optimistic flip
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
-          ? { ...x, offer_made: !isOffered, has_offer: !isOffered, offered: !isOffered }
+          ? { ...x, offer_made: !wasOffered, has_offer: !wasOffered, offered: !wasOffered }
           : x
       )
     );
 
     try {
-      await toggleOfferServerless({
+      await toggleOffer({
         leagueId: props.leagueId,
         teamId: props.teamId,
         recruitId: rid,
         season: props.currentSeason,
-        makeOffer: !isOffered,
+        makeOffer: !wasOffered,
       });
     } catch (e: any) {
       // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
-            ? { ...x, offer_made: isOffered, has_offer: isOffered, offered: isOffered }
+            ? { ...x, offer_made: wasOffered, has_offer: wasOffered, offered: wasOffered }
             : x
         )
       );
@@ -235,20 +217,14 @@ export default function RecruitingClient(props: {
         </div>
       ) : null}
 
-      <div
-        style={{
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: 14,
-          overflow: "hidden",
-        }}
-      >
+      <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, overflow: "hidden" }}>
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "26px 1.4fr 90px 90px 220px 140px",
             gap: 10,
             padding: "10px 12px",
-            fontWeight: 700,
+            fontWeight: 800,
             background: "rgba(255,255,255,0.06)",
             borderBottom: "1px solid rgba(255,255,255,0.10)",
           }}
@@ -266,7 +242,7 @@ export default function RecruitingClient(props: {
           const open = Boolean(expanded[rid]);
           const offered = getOfferFlag(r);
           const top8 = Array.isArray(r.top8) ? (r.top8 as Top8Entry[]) : [];
-          const myInterest = Number(r.my_interest ?? r.interest ?? 0);
+          const myInterest = Number(r.my_interest ?? 0);
 
           return (
             <div key={rid} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -295,13 +271,12 @@ export default function RecruitingClient(props: {
                 </button>
 
                 <div style={{ display: "flex", flexDirection: "column" }}>
-                  <div style={{ fontWeight: 650 }}>{getName(r)}</div>
+                  <div style={{ fontWeight: 700 }}>{getName(r)}</div>
                   <div style={{ opacity: 0.75, fontSize: 12 }}>{rid}</div>
                 </div>
 
                 <div>{getPos(r)}</div>
                 <div>{getStars(r)}</div>
-
                 <InterestBar value={myInterest} />
 
                 <button
@@ -313,7 +288,7 @@ export default function RecruitingClient(props: {
                     border: "1px solid rgba(255,255,255,0.15)",
                     background: offered ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)",
                     cursor: busy[rid] ? "not-allowed" : "pointer",
-                    fontWeight: 650,
+                    fontWeight: 800,
                   }}
                 >
                   {busy[rid] ? "…" : offered ? "Remove Offer" : "Make Offer"}
@@ -322,7 +297,7 @@ export default function RecruitingClient(props: {
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px" }}>
-                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Top 8</div>
+                  <div style={{ fontWeight: 800, marginBottom: 8 }}>Top 8</div>
 
                   {top8.length === 0 ? (
                     <div style={{ opacity: 0.8 }}>No interest data yet.</div>
@@ -331,8 +306,8 @@ export default function RecruitingClient(props: {
                       style={{
                         display: "grid",
                         gridTemplateColumns: "1fr 90px",
-                        gap: 8,
-                        maxWidth: 520,
+                        gap: 0,
+                        maxWidth: 560,
                         border: "1px solid rgba(255,255,255,0.10)",
                         borderRadius: 12,
                         overflow: "hidden",
@@ -345,17 +320,26 @@ export default function RecruitingClient(props: {
                           gridTemplateColumns: "1fr 90px",
                           padding: "8px 10px",
                           background: "rgba(255,255,255,0.06)",
-                          fontWeight: 700,
+                          fontWeight: 800,
                         }}
                       >
                         <div>School</div>
                         <div style={{ textAlign: "right" }}>Interest</div>
                       </div>
 
-                      {top8.map((t) => (
-                        <React.Fragment key={`${rid}:${t.team_id}`}>
-                          <div style={{ padding: "8px 10px" }}>{t.team_name}</div>
-                          <div style={{ padding: "8px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {top8.map((t, idx) => (
+                        <React.Fragment key={`${rid}:${t.team_id}:${idx}`}>
+                          <div style={{ padding: "8px 10px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                            {t.team_name}
+                          </div>
+                          <div
+                            style={{
+                              padding: "8px 10px",
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              borderTop: "1px solid rgba(255,255,255,0.06)",
+                            }}
+                          >
                             {clamp(Number(t.interest ?? 0))}
                           </div>
                         </React.Fragment>
