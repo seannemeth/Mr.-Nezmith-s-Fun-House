@@ -42,7 +42,14 @@ function InterestBar({ value }: { value: number }) {
       >
         <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.78)" }} />
       </div>
-      <div style={{ fontVariantNumeric: "tabular-nums", width: 34, textAlign: "right", color: "rgba(255,255,255,0.92)" }}>
+      <div
+        style={{
+          fontVariantNumeric: "tabular-nums",
+          width: 34,
+          textAlign: "right",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      >
         {v}
       </div>
     </div>
@@ -192,6 +199,9 @@ export default function RecruitingClient(props: {
     });
   }, [rows, query, sort, view]);
 
+  // =========================
+  // PAID OFFER TOGGLE (RPC)
+  // =========================
   async function onToggleOffer(r: Recruit) {
     const rid = r._recruit_id;
     const wasOffered = getOfferFlag(r);
@@ -199,6 +209,7 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
+    // optimistic UI flip
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -208,25 +219,26 @@ export default function RecruitingClient(props: {
     );
 
     try {
-      if (!wasOffered) {
-        const { error: insErr } = await supabase.from("recruiting_offers").insert({
-          league_id: props.leagueId,
-          team_id: props.teamId,
-          recruit_id: rid,
-          season: props.currentSeason,
-        });
-        if (insErr) throw new Error(insErr.message);
-      } else {
-        const { error: delErr } = await supabase
-          .from("recruiting_offers")
-          .delete()
-          .eq("league_id", props.leagueId)
-          .eq("team_id", props.teamId)
-          .eq("recruit_id", rid)
-          .eq("season", props.currentSeason);
-        if (delErr) throw new Error(delErr.message);
-      }
+      const { data, error: rpcErr } = await supabase.rpc("recruiting_toggle_offer_paid_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_season: props.currentSeason,
+      });
+
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      const nowOffered = Boolean(data);
+
+      setRows((prev) =>
+        prev.map((x) =>
+          x._recruit_id === rid
+            ? { ...x, offer_made: nowOffered, has_offer: nowOffered, offered: nowOffered }
+            : x
+        )
+      );
     } catch (e: any) {
+      // revert on error
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
@@ -240,6 +252,7 @@ export default function RecruitingClient(props: {
     }
   }
 
+  // Board toggle stays direct (not paid yet)
   async function onToggleBoard(r: Recruit) {
     const rid = r._recruit_id;
     const wasOn = Boolean(r.on_board);
@@ -282,6 +295,9 @@ export default function RecruitingClient(props: {
     return Math.min(16, Math.max(1, props.currentWeek + 1));
   }
 
+  // =========================
+  // PAID VISIT SCHEDULE (RPC)
+  // =========================
   async function onScheduleVisit(r: Recruit) {
     const rid = r._recruit_id;
     const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
@@ -299,12 +315,13 @@ export default function RecruitingClient(props: {
     );
 
     try {
-      const { error: rpcErr } = await supabase.rpc("schedule_recruit_visit_v1", {
+      const { error: rpcErr } = await supabase.rpc("schedule_recruit_visit_paid_v1", {
         p_league_id: props.leagueId,
         p_team_id: props.teamId,
         p_recruit_id: rid,
         p_week: chosenWeek,
         p_bonus: 5,
+        p_season: props.currentSeason,
       });
 
       if (rpcErr) throw new Error(rpcErr.message);
@@ -332,6 +349,7 @@ export default function RecruitingClient(props: {
     );
 
     try {
+      // Removing visit: no refund in v1
       const { error: rpcErr } = await supabase.rpc("remove_recruit_visit_v1", {
         p_league_id: props.leagueId,
         p_team_id: props.teamId,
@@ -563,15 +581,27 @@ export default function RecruitingClient(props: {
                         </select>
 
                         {!scheduledWeek ? (
-                          <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                          <ActionButton
+                            variant="secondary"
+                            disabled={Boolean(busy[`visit:${rid}`])}
+                            onClick={() => onScheduleVisit(r)}
+                          >
                             {busy[`visit:${rid}`] ? "…" : "Schedule Visit"}
                           </ActionButton>
                         ) : (
                           <>
-                            <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                            <ActionButton
+                              variant="secondary"
+                              disabled={Boolean(busy[`visit:${rid}`])}
+                              onClick={() => onScheduleVisit(r)}
+                            >
                               {busy[`visit:${rid}`] ? "…" : "Reschedule"}
                             </ActionButton>
-                            <ActionButton variant="danger" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onRemoveVisit(r)}>
+                            <ActionButton
+                              variant="danger"
+                              disabled={Boolean(busy[`visit:${rid}`])}
+                              onClick={() => onRemoveVisit(r)}
+                            >
                               {busy[`visit:${rid}`] ? "…" : "Remove"}
                             </ActionButton>
                           </>
