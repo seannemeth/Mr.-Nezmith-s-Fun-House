@@ -15,8 +15,7 @@ type RecruitRow = {
   height_in: number | null;
   weight_lb: number | null;
 
-  // optional/derived
-  interest?: number | null; // "My Interest" if available from view
+  interest?: number | null; // "My Interest" if available from a view
   offered?: boolean | null;
   on_board?: boolean | null;
 };
@@ -28,10 +27,6 @@ type LeagueRow = {
   current_week?: number | null;
   active_season?: number | null;
   active_week?: number | null;
-};
-
-type FinanceRow = {
-  cash_balance: number;
 };
 
 type ContactType = 'text' | 'dm' | 'social' | 'call' | 'coach_visit' | 'home_visit';
@@ -78,23 +73,19 @@ type SortKey =
 
 function pickSeasonWeek(league: LeagueRow | null): { season: number; week: number } {
   const season =
-    Number(
-      league?.current_season ??
-        league?.season ??
-        league?.active_season ??
-        1
-    ) || 1;
-
-  const week =
-    Number(
-      league?.current_week ??
-        league?.week ??
-        league?.active_week ??
-        1
-    ) || 1;
-
+    Number(league?.current_season ?? league?.season ?? league?.active_season ?? 1) || 1;
+  const week = Number(league?.current_week ?? league?.week ?? league?.active_week ?? 1) || 1;
   return { season, week };
 }
+
+type SelectMode = 'rich' | 'base';
+
+const SELECTS: Record<SelectMode, string> = {
+  // for views that already join interest/offer/board
+  rich: 'id,name,position,stars,archetype,height_in,weight_lb,my_interest,interest,offered,on_board',
+  // for plain recruits table
+  base: 'id,name,position,stars,archetype,height_in,weight_lb',
+};
 
 export default function RecruitingClient({
   leagueId,
@@ -116,33 +107,25 @@ export default function RecruitingClient({
 
   const [expanded, setExpanded] = useState<UUID | null>(null);
 
-  // contacts used state
   const [weeklyUsed, setWeeklyUsed] = useState<number>(0);
   const [usedContacts, setUsedContacts] = useState<Record<string, boolean>>({});
 
-  // sorting
   const [sortKey, setSortKey] = useState<SortKey>('stars');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   function usedKey(recruitId: UUID, contactType: ContactType) {
-    return `${recruitId}:${contactType}`; // internal only
+    return `${recruitId}:${contactType}`;
   }
 
-  async function trySelectRecruitsFrom(
+  async function selectRecruits(
     table: string,
+    mode: SelectMode,
     useLeagueFilter: boolean
   ): Promise<RecruitRow[] | null> {
-    // Different views/tables may expose different columns.
-    // We try a superset list; missing columns will error, and we’ll fall back.
-    const baseSelect =
-      'id,name,position,stars,archetype,height_in,weight_lb,my_interest,offered,on_board';
-
-    let q = supabase.from(table).select(baseSelect).limit(500);
-
+    let q = supabase.from(table).select(SELECTS[mode]).limit(500);
     if (useLeagueFilter) q = q.eq('league_id', leagueId);
 
     const { data, error } = await q;
-
     if (error) return null;
 
     const mapped: RecruitRow[] = (data ?? []).map((r: any) => ({
@@ -161,12 +144,39 @@ export default function RecruitingClient({
     return mapped;
   }
 
+  async function loadRecruits(): Promise<RecruitRow[]> {
+    // Try rich recruiting views first
+    const richSources: Array<{ table: string; leagueFilter: boolean }> = [
+      { table: 'recruiting_recruits_v1', leagueFilter: true },
+      { table: 'recruiting_recruits', leagueFilter: true },
+      { table: 'league_recruits', leagueFilter: true },
+    ];
+
+    for (const s of richSources) {
+      const rows = await selectRecruits(s.table, 'rich', s.leagueFilter);
+      if (rows && rows.length) return rows;
+      if (rows) return rows; // empty but valid query => stop searching
+    }
+
+    // Fallback: recruits table (retry base select if rich fails)
+    // 1) try league scoped base
+    let rows = await selectRecruits('recruits', 'base', true);
+    if (rows) return rows;
+
+    // 2) try non-league base (global pool)
+    rows = await selectRecruits('recruits', 'base', false);
+    if (rows) return rows;
+
+    // If none worked, return empty
+    return [];
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
 
     try {
-      // 1) league season/week (authoritative)
+      // League season/week
       const { data: league, error: leagueErr } = await supabase
         .from('leagues')
         .select('*')
@@ -179,8 +189,7 @@ export default function RecruitingClient({
       setSeason(sw.season);
       setWeek(sw.week);
 
-      // 2) cash (do NOT assume week column exists)
-      // We just grab latest cash_balance row we can find.
+      // Cash (do not assume team_finances.week exists)
       const { data: fin, error: finErr } = await supabase
         .from('team_finances')
         .select('cash_balance')
@@ -190,7 +199,6 @@ export default function RecruitingClient({
         .limit(1)
         .maybeSingle();
 
-      // If team_finances also lacks season, order() might fail. If it fails, fallback to first row.
       if (finErr) {
         const { data: fin2, error: fin2Err } = await supabase
           .from('team_finances')
@@ -206,26 +214,11 @@ export default function RecruitingClient({
         setCash(Number((fin as any)?.cash_balance ?? 0));
       }
 
-      // 3) recruits: try views first, then fallback tables
-      //    Most likely you have a recruiting view that already joins interest/board/offer flags.
-      const sources: Array<{ table: string; leagueFilter: boolean }> = [
-        { table: 'recruiting_recruits_v1', leagueFilter: true },
-        { table: 'recruiting_recruits', leagueFilter: true },
-        { table: 'league_recruits', leagueFilter: true },
-        { table: 'recruits', leagueFilter: true },  // try league_id if present
-        { table: 'recruits', leagueFilter: false }, // last resort: global pool
-      ];
+      // Recruits
+      const recs = await loadRecruits();
+      setRecruits(recs);
 
-      let loaded: RecruitRow[] | null = null;
-
-      for (const s of sources) {
-        loaded = await trySelectRecruitsFrom(s.table, s.leagueFilter);
-        if (loaded) break;
-      }
-
-      setRecruits(loaded ?? []);
-
-      // 4) used contacts for season/week
+      // Used contacts for current season/week
       const { data: contacts, error: cErr } = await supabase
         .from('recruiting_contacts')
         .select('recruit_id, contact_type')
@@ -351,13 +344,7 @@ export default function RecruitingClient({
       const { error: upErr } = await supabase
         .from('recruiting_board')
         .upsert(
-          {
-            league_id: leagueId,
-            team_id: teamId,
-            recruit_id: recruitId,
-            season,
-            week,
-          },
+          { league_id: leagueId, team_id: teamId, recruit_id: recruitId, season, week },
           { onConflict: 'league_id,team_id,recruit_id', ignoreDuplicates: true }
         );
 
@@ -372,7 +359,6 @@ export default function RecruitingClient({
 
   return (
     <div className="w-full">
-      {/* Header */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <div className="rounded-lg border px-3 py-2">
@@ -408,10 +394,8 @@ export default function RecruitingClient({
         </div>
       )}
 
-      {/* Scroll container fixes right-side cut-off */}
       <div className="w-full overflow-x-auto rounded-xl border">
         <div className="min-w-[1100px]">
-          {/* Table header */}
           <div
             className="grid items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-semibold"
             style={{
@@ -443,7 +427,6 @@ export default function RecruitingClient({
             <div className="sticky right-0 bg-black/5 pl-2">Actions</div>
           </div>
 
-          {/* Rows */}
           {loading ? (
             <div className="px-3 py-6 text-sm opacity-70">Loading recruits…</div>
           ) : (
@@ -463,7 +446,6 @@ export default function RecruitingClient({
                       <button
                         className="text-left font-semibold hover:underline"
                         onClick={() => setExpanded((cur) => (cur === r.id ? null : r.id))}
-                        title="Expand recruit"
                       >
                         {r.name}
                       </button>
@@ -581,8 +563,7 @@ export default function RecruitingClient({
                 <div className="px-3 py-6 text-sm opacity-70">
                   No recruits found.
                   <div className="mt-2 text-xs opacity-70">
-                    If you expect recruits: you likely have a recruiting view (e.g. <code className="font-mono">recruiting_recruits_v1</code>)
-                    or your recruits table is not league-scoped.
+                    This usually means your recruits live in a different table/view name or are protected by RLS.
                   </div>
                 </div>
               )}
