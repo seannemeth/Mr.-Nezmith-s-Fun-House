@@ -54,10 +54,26 @@ async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leag
   return {};
 }
 
+async function hasColumn(
+  supabase: ReturnType<typeof supabaseServer>,
+  table: string,
+  col: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("information_schema.columns")
+    .select("column_name")
+    .eq("table_schema", "public")
+    .eq("table_name", table)
+    .eq("column_name", col)
+    .limit(1);
+
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
+}
+
 export default async function RecruitingPage({ params }: { params: { leagueId: string } }) {
   const leagueId = params.leagueId;
 
-  // Grab env ON SERVER and pass to client (avoids client env issues)
   const supabaseUrl = reqEnv("NEXT_PUBLIC_SUPABASE_URL");
   const supabaseAnonKey = reqEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
@@ -142,6 +158,38 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
+  // Visits (my team only)
+  type MyVisit = { recruit_id: string; week: number; bonus: number };
+  const myVisitByRecruit: Record<string, MyVisit> = {};
+
+  const hasVisitsTable = true; // if you want: (await supabase.from(...)) — keep simple
+  if (hasVisitsTable && recruitIds.length > 0) {
+    const hasVisitBonus = await hasColumn(supabase, "recruit_visits", "visit_bonus");
+    const bonusCol = hasVisitBonus ? "visit_bonus" : "bonus";
+
+    // We don't need recruitIds filter (could be large IN), but it's fine for 250
+    const { data: visitRows, error: vErr } = await supabase
+      .from("recruit_visits")
+      .select(`recruit_id,week,${bonusCol}`)
+      .eq("league_id", leagueId)
+      .eq("team_id", teamId)
+      .in("recruit_id", recruitIds);
+
+    if (!vErr && Array.isArray(visitRows)) {
+      for (const v of visitRows as any[]) {
+        const rid = String(v.recruit_id);
+        const week = Number(v.week ?? 0);
+        const bonus = Number(v[bonusCol] ?? 0);
+
+        // If multiple weeks exist, keep the earliest upcoming visit
+        const cur = myVisitByRecruit[rid];
+        if (!cur || (week > 0 && week < cur.week)) {
+          myVisitByRecruit[rid] = { recruit_id: rid, week, bonus };
+        }
+      }
+    }
+  }
+
   const teamNameById = await loadTeamNameMap(supabase, leagueId);
 
   const byRecruit: Record<string, Array<{ team_id: string; interest: number }>> = {};
@@ -157,12 +205,18 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }));
     const mine = list.find((x) => x.team_id === teamId)?.interest ?? 0;
 
+    const mv = myVisitByRecruit[rid];
+
     return {
       ...r,
       _recruit_id: rid,
       my_interest: mine,
       top8,
       on_board: boardIds.has(rid),
+
+      // ✅ visits
+      my_visit_week: mv?.week ?? null,
+      my_visit_bonus: mv?.bonus ?? null,
     };
   });
 
@@ -180,6 +234,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
         teamId={teamId}
         recruits={hydrated}
         currentSeason={currentSeason}
+        currentWeek={currentWeek} // ✅ add
       />
     </div>
   );
