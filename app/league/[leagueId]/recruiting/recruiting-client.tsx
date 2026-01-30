@@ -18,12 +18,29 @@ type Recruit = Record<string, any> & {
 
   my_visit_week?: number | null;
   my_visit_bonus?: number | null;
-
   my_visit_applied?: boolean;
+
+  // NEW fields (from recruits table)
+  height_in?: number | null;
+  weight_lb?: number | null;
+  archetype?: string | null;
 };
 
 function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
+}
+
+function fmtMoney(n: number | null | undefined) {
+  const v = Number(n ?? 0);
+  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function fmtHeight(inches?: number | null) {
+  const v = Number(inches ?? 0);
+  if (!v) return "";
+  const ft = Math.floor(v / 12);
+  const inch = v % 12;
+  return `${ft}'${inch}"`;
 }
 
 function InterestBar({ value }: { value: number }) {
@@ -99,6 +116,9 @@ function getStars(r: Recruit) {
 function getOfferFlag(r: Recruit) {
   return Boolean(r.offer_made ?? r.has_offer ?? r.offered ?? r.offer ?? false);
 }
+function getArch(r: Recruit) {
+  return (r.archetype ?? r.archetype_name ?? "").toString();
+}
 
 function PillButton(props: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -116,6 +136,27 @@ function PillButton(props: { active?: boolean; onClick: () => void; children: Re
     >
       {props.children}
     </button>
+  );
+}
+
+function HeaderChip(props: { label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "8px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.16)",
+        background: "rgba(255,255,255,0.08)",
+        fontWeight: 900,
+        fontSize: 12,
+        color: "rgba(255,255,255,0.92)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {props.label}
+    </span>
   );
 }
 
@@ -150,6 +191,36 @@ function ActionButton(props: {
   );
 }
 
+type SortKey = "name" | "pos" | "arch" | "ht" | "wt" | "stars" | "interest";
+type SortDir = "asc" | "desc";
+
+function SortHeader(props: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={props.onClick}
+      style={{
+        all: "unset",
+        cursor: "pointer",
+        fontWeight: 900,
+        color: "rgba(255,255,255,0.95)",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        userSelect: "none",
+      }}
+      aria-label={`Sort by ${props.label}`}
+    >
+      {props.label}
+      {props.active ? <span style={{ opacity: 0.85 }}>{props.dir === "asc" ? "▲" : "▼"}</span> : <span style={{ opacity: 0.35 }}>↕</span>}
+    </button>
+  );
+}
+
 export default function RecruitingClient(props: {
   supabaseUrl: string;
   supabaseAnonKey: string;
@@ -168,15 +239,75 @@ export default function RecruitingClient(props: {
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   const [busy, setBusy] = React.useState<Record<string, boolean>>({});
   const [query, setQuery] = React.useState("");
-  const [sort, setSort] = React.useState<"interest" | "stars" | "name">("interest");
   const [view, setView] = React.useState<"all" | "board">("all");
   const [error, setError] = React.useState<string | null>(null);
   const [hover, setHover] = React.useState<string | null>(null);
   const [visitWeekChoice, setVisitWeekChoice] = React.useState<Record<string, number>>({});
 
+  // NEW: Sorting
+  const [sortKey, setSortKey] = React.useState<SortKey>("interest");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+
+  // NEW: Header finance + weekly points remaining (computed client-side)
+  const [cash, setCash] = React.useState<number | null>(null);
+  const [weeklyCap, setWeeklyCap] = React.useState<number>(100);
+  const [weeklyUsed, setWeeklyUsed] = React.useState<number>(0);
+
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
   const boardCount = React.useMemo(() => rows.filter((r) => Boolean(r.on_board)).length, [rows]);
+
+  // Load team cash + weekly used points
+  React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadHeader() {
+      try {
+        // cash
+        const { data: fin } = await supabase
+          .from("team_finances")
+          .select("cash_balance")
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .maybeSingle();
+
+        if (!cancelled) setCash(Number(fin?.cash_balance ?? 0));
+
+        // weekly used
+        const { data: contacts } = await supabase
+          .from("recruiting_contacts")
+          .select("points")
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .eq("season", props.currentSeason)
+          .eq("week", props.currentWeek);
+
+        const used = Array.isArray(contacts) ? contacts.reduce((a: number, r: any) => a + Number(r?.points ?? 0), 0) : 0;
+        if (!cancelled) setWeeklyUsed(used);
+
+        // cap (v1 fixed 100, but we keep it in state so future scaling is easy)
+        if (!cancelled) setWeeklyCap(100);
+      } catch {
+        // silent; header will still render
+      }
+    }
+
+    loadHeader();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, props.leagueId, props.teamId, props.currentSeason, props.currentWeek]);
+
+  const weeklyRemaining = Math.max(0, weeklyCap - weeklyUsed);
+
+  function toggleSort(nextKey: SortKey) {
+    if (sortKey === nextKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(nextKey);
+      setSortDir(nextKey === "name" || nextKey === "pos" || nextKey === "arch" ? "asc" : "desc");
+    }
+  }
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -185,12 +316,25 @@ export default function RecruitingClient(props: {
     if (view === "board") list = list.filter((r) => Boolean(r.on_board));
     if (q) list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
 
+    const dir = sortDir === "asc" ? 1 : -1;
+
+    const getVal = (r: Recruit): string | number => {
+      if (sortKey === "name") return getName(r);
+      if (sortKey === "pos") return String(getPos(r) ?? "");
+      if (sortKey === "arch") return String(getArch(r) ?? "");
+      if (sortKey === "ht") return Number(r.height_in ?? 0);
+      if (sortKey === "wt") return Number(r.weight_lb ?? 0);
+      if (sortKey === "stars") return Number(getStars(r) || 0);
+      return Number(r.my_interest ?? 0);
+    };
+
     return list.slice().sort((a, b) => {
-      if (sort === "interest") return Number(b.my_interest ?? 0) - Number(a.my_interest ?? 0);
-      if (sort === "stars") return Number(getStars(b) || 0) - Number(getStars(a) || 0);
-      return getName(a).localeCompare(getName(b));
+      const av = getVal(a);
+      const bv = getVal(b);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
     });
-  }, [rows, query, sort, view]);
+  }, [rows, query, view, sortKey, sortDir]);
 
   // =========================
   // OFFERS (PAID via RPC)
@@ -229,6 +373,15 @@ export default function RecruitingClient(props: {
             : x
         )
       );
+
+      // refresh cash (cheap)
+      const { data: fin } = await supabase
+        .from("team_finances")
+        .select("cash_balance")
+        .eq("league_id", props.leagueId)
+        .eq("team_id", props.teamId)
+        .maybeSingle();
+      setCash(Number(fin?.cash_balance ?? cash ?? 0));
     } catch (e: any) {
       // revert
       setRows((prev) =>
@@ -305,7 +458,7 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
 
-    // optimistic: scheduled but not applied yet
+    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -325,6 +478,14 @@ export default function RecruitingClient(props: {
       });
 
       if (rpcErr) throw new Error(rpcErr.message);
+
+      const { data: fin } = await supabase
+        .from("team_finances")
+        .select("cash_balance")
+        .eq("league_id", props.leagueId)
+        .eq("team_id", props.teamId)
+        .maybeSingle();
+      setCash(Number(fin?.cash_balance ?? cash ?? 0));
     } catch (e: any) {
       setRows((prev) =>
         prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
@@ -344,12 +505,9 @@ export default function RecruitingClient(props: {
     const prevWeek = r.my_visit_week ?? null;
     const prevBonus = r.my_visit_bonus ?? null;
 
-    setRows((prev) =>
-      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
-    );
+    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x)));
 
     try {
-      // Removing visit: no refund in v1
       const { error: rpcErr } = await supabase.rpc("remove_recruit_visit_v1", {
         p_league_id: props.leagueId,
         p_team_id: props.teamId,
@@ -359,9 +517,7 @@ export default function RecruitingClient(props: {
       if (rpcErr) throw new Error(rpcErr.message);
     } catch (e: any) {
       setRows((prev) =>
-        prev.map((x) =>
-          x._recruit_id === rid ? { ...x, my_visit_week: prevWeek, my_visit_bonus: prevBonus } : x
-        )
+        prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: prevWeek, my_visit_bonus: prevBonus } : x))
       );
       setError(e?.message ?? "Failed to remove visit.");
     } finally {
@@ -369,8 +525,72 @@ export default function RecruitingClient(props: {
     }
   }
 
+  // =========================
+  // CONTACT ACTIONS (CFB26-style)
+  // =========================
+  async function onContact(r: Recruit, contactType: "call" | "text" | "dm" | "social" | "coach_visit" | "home_visit") {
+    const rid = r._recruit_id;
+    const key = `contact:${contactType}:${rid}`;
+
+    setError(null);
+    setBusy((m) => ({ ...m, [key]: true }));
+
+    try {
+      const { data, error: rpcErr } = await supabase.rpc("recruiting_apply_contact_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_season: props.currentSeason,
+        p_week: props.currentWeek,
+        p_contact_type: contactType,
+      });
+
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      const delta = Number((data as any)?.interest_delta ?? 0);
+      const remaining = Number((data as any)?.weekly_remaining ?? weeklyRemaining);
+      const used = Number((data as any)?.weekly_used ?? weeklyUsed);
+      const cost = Number((data as any)?.cash_cost ?? 0);
+
+      // optimistic: bump my_interest
+      setRows((prev) =>
+        prev.map((x) =>
+          x._recruit_id === rid ? { ...x, my_interest: clamp(Number(x.my_interest ?? 0) + delta) } : x
+        )
+      );
+
+      // update header
+      setWeeklyUsed(used);
+      setWeeklyCap(Number((data as any)?.weekly_cap ?? weeklyCap));
+      setCash((c) => Number((c ?? 0) - cost));
+    } catch (e: any) {
+      setError(e?.message ?? "Contact failed.");
+    } finally {
+      setBusy((m) => ({ ...m, [key]: false }));
+    }
+  }
+
   return (
     <div style={{ color: "rgba(255,255,255,0.94)" }}>
+      {/* HEADER */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: 0.2 }}>Recruiting</div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            Season {props.currentSeason} • Week {props.currentWeek}
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        <HeaderChip label={`Cash: $${fmtMoney(cash)}`} />
+        <HeaderChip label={`Contact Pts: ${weeklyRemaining}/${weeklyCap}`} />
+        <HeaderChip label={`Offer: $25k`} />
+        <HeaderChip label={`Visit: $50k`} />
+        <HeaderChip label={`Call/Text/DM: $5–10k`} />
+      </div>
+
+      {/* FILTER / SEARCH / SORT */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         <PillButton active={view === "all"} onClick={() => setView("all")}>
           All Recruits
@@ -395,23 +615,6 @@ export default function RecruitingClient(props: {
             outline: "none",
           }}
         />
-
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as any)}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.18)",
-            background: "rgba(255,255,255,0.06)",
-            color: "rgba(255,255,255,0.92)",
-            outline: "none",
-          }}
-        >
-          <option value="interest">Sort: My Interest</option>
-          <option value="stars">Sort: Stars</option>
-          <option value="name">Sort: Name</option>
-        </select>
       </div>
 
       {error ? (
@@ -431,23 +634,28 @@ export default function RecruitingClient(props: {
       ) : null}
 
       <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 16, overflow: "hidden" }}>
+        {/* TABLE HEADER (sortable) */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
+            gridTemplateColumns: "26px 1.2fr 70px 120px 70px 70px 70px 220px 120px 140px",
             gap: 10,
             padding: "10px 12px",
             fontWeight: 900,
             background: "rgba(255,255,255,0.10)",
             borderBottom: "1px solid rgba(255,255,255,0.12)",
             color: "rgba(255,255,255,0.95)",
+            alignItems: "center",
           }}
         >
           <div />
-          <div>Recruit</div>
-          <div>Pos</div>
-          <div>Stars</div>
-          <div>My Interest</div>
+          <SortHeader label="Recruit" active={sortKey === "name"} dir={sortDir} onClick={() => toggleSort("name")} />
+          <SortHeader label="Pos" active={sortKey === "pos"} dir={sortDir} onClick={() => toggleSort("pos")} />
+          <SortHeader label="Archetype" active={sortKey === "arch"} dir={sortDir} onClick={() => toggleSort("arch")} />
+          <SortHeader label="Ht" active={sortKey === "ht"} dir={sortDir} onClick={() => toggleSort("ht")} />
+          <SortHeader label="Wt" active={sortKey === "wt"} dir={sortDir} onClick={() => toggleSort("wt")} />
+          <SortHeader label="Stars" active={sortKey === "stars"} dir={sortDir} onClick={() => toggleSort("stars")} />
+          <SortHeader label="My Interest" active={sortKey === "interest"} dir={sortDir} onClick={() => toggleSort("interest")} />
           <div>Board</div>
           <div />
         </div>
@@ -463,7 +671,6 @@ export default function RecruitingClient(props: {
 
           const scheduledWeek = r.my_visit_week ? Number(r.my_visit_week) : null;
           const scheduledBonus = r.my_visit_bonus != null ? Number(r.my_visit_bonus) : null;
-
           const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
 
           return (
@@ -473,7 +680,7 @@ export default function RecruitingClient(props: {
                 onMouseLeave={() => setHover(null)}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "26px 1.2fr 90px 90px 220px 120px 140px",
+                  gridTemplateColumns: "26px 1.2fr 70px 120px 70px 70px 70px 220px 120px 140px",
                   gap: 10,
                   padding: "10px 12px",
                   alignItems: "center",
@@ -503,7 +710,17 @@ export default function RecruitingClient(props: {
                 </div>
 
                 <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getPos(r)}</div>
+                <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: getArch(r) ? 1 : 0.6 }}>
+                  {getArch(r) || "—"}
+                </div>
+                <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: r.height_in ? 1 : 0.6 }}>
+                  {fmtHeight(r.height_in) || "—"}
+                </div>
+                <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: r.weight_lb ? 1 : 0.6 }}>
+                  {r.weight_lb ? `${r.weight_lb}` : "—"}
+                </div>
                 <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getStars(r)}</div>
+
                 <InterestBar value={myInterest} />
 
                 <ActionButton variant="secondary" onClick={() => onToggleBoard(r)} disabled={Boolean(busy[`board:${rid}`])}>
@@ -517,8 +734,72 @@ export default function RecruitingClient(props: {
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px", display: "grid", gap: 14 }}>
+                  {/* CONTACT ACTIONS */}
                   <div>
-                    <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Visit</div>
+                    <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Contact</div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 10,
+                        alignItems: "center",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: "rgba(255,255,255,0.05)",
+                        borderRadius: 14,
+                        padding: 10,
+                      }}
+                    >
+                      <ActionButton
+                        variant="neutral"
+                        disabled={Boolean(busy[`contact:text:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "text")}
+                      >
+                        {busy[`contact:text:${rid}`] ? "…" : "Text"}
+                      </ActionButton>
+                      <ActionButton
+                        variant="neutral"
+                        disabled={Boolean(busy[`contact:dm:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "dm")}
+                      >
+                        {busy[`contact:dm:${rid}`] ? "…" : "DM"}
+                      </ActionButton>
+                      <ActionButton
+                        variant="neutral"
+                        disabled={Boolean(busy[`contact:social:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "social")}
+                      >
+                        {busy[`contact:social:${rid}`] ? "…" : "Social"}
+                      </ActionButton>
+                      <ActionButton
+                        variant="secondary"
+                        disabled={Boolean(busy[`contact:call:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "call")}
+                      >
+                        {busy[`contact:call:${rid}`] ? "…" : "Call"}
+                      </ActionButton>
+                      <ActionButton
+                        variant="secondary"
+                        disabled={Boolean(busy[`contact:coach_visit:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "coach_visit")}
+                      >
+                        {busy[`contact:coach_visit:${rid}`] ? "…" : "Coach Visit"}
+                      </ActionButton>
+                      <ActionButton
+                        variant="primary"
+                        disabled={Boolean(busy[`contact:home_visit:${rid}`]) || weeklyRemaining <= 0}
+                        onClick={() => onContact(r, "home_visit")}
+                      >
+                        {busy[`contact:home_visit:${rid}`] ? "…" : "Home Visit"}
+                      </ActionButton>
+
+                      <div style={{ flex: 1 }} />
+                      <StatusPill label={`Pts left: ${weeklyRemaining}`} tone={weeklyRemaining > 0 ? "ok" : "warn"} />
+                    </div>
+                  </div>
+
+                  {/* VISIT */}
+                  <div>
+                    <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Official Visit</div>
 
                     <div
                       style={{
@@ -530,7 +811,7 @@ export default function RecruitingClient(props: {
                         background: "rgba(255,255,255,0.05)",
                         borderRadius: 14,
                         padding: 10,
-                        maxWidth: 760,
+                        maxWidth: 900,
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -546,11 +827,7 @@ export default function RecruitingClient(props: {
                         </div>
 
                         {scheduledWeek ? (
-                          r.my_visit_applied ? (
-                            <StatusPill label="Applied ✅" tone="ok" />
-                          ) : (
-                            <StatusPill label="Pending" tone="warn" />
-                          )
+                          r.my_visit_applied ? <StatusPill label="Applied ✅" tone="ok" /> : <StatusPill label="Pending" tone="warn" />
                         ) : null}
                       </div>
 
@@ -581,15 +858,27 @@ export default function RecruitingClient(props: {
                         </select>
 
                         {!scheduledWeek ? (
-                          <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                          <ActionButton
+                            variant="secondary"
+                            disabled={Boolean(busy[`visit:${rid}`])}
+                            onClick={() => onScheduleVisit(r)}
+                          >
                             {busy[`visit:${rid}`] ? "…" : "Schedule Visit"}
                           </ActionButton>
                         ) : (
                           <>
-                            <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                            <ActionButton
+                              variant="secondary"
+                              disabled={Boolean(busy[`visit:${rid}`])}
+                              onClick={() => onScheduleVisit(r)}
+                            >
                               {busy[`visit:${rid}`] ? "…" : "Reschedule"}
                             </ActionButton>
-                            <ActionButton variant="danger" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onRemoveVisit(r)}>
+                            <ActionButton
+                              variant="danger"
+                              disabled={Boolean(busy[`visit:${rid}`])}
+                              onClick={() => onRemoveVisit(r)}
+                            >
                               {busy[`visit:${rid}`] ? "…" : "Remove"}
                             </ActionButton>
                           </>
@@ -598,6 +887,7 @@ export default function RecruitingClient(props: {
                     </div>
                   </div>
 
+                  {/* TOP 8 */}
                   <div>
                     <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Top 8</div>
 
