@@ -1,65 +1,47 @@
-// app/league/[leagueId]/recruiting/AdvanceWeekButton.tsx
 "use client";
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { advanceRecruitingWeek } from "./actions";
+import { advanceRecruitingWeekAction } from "./actions";
 
 export default function AdvanceWeekButton({
   leagueId,
-  disabled,
 }: {
   leagueId: string;
-  disabled?: boolean;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = React.useState(false);
-  const [status, setStatus] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  async function onClick() {
-    if (!leagueId) return;
-    setBusy(true);
-    setStatus(null);
+  async function onAdvance() {
+    setPending(true);
+    setError(null);
 
     try {
-      const res = await advanceRecruitingWeek(leagueId);
-
-      if (!res?.ok) {
-        setStatus(`❌ ${res?.message ?? "Failed"}`);
-        return;
-      }
-
-      setStatus(`✅ ${res.message}`);
-
-      // ✅ This is the key: re-fetch Server Component data
+      await advanceRecruitingWeekAction(leagueId);
+      // refresh the page so server components re-fetch updated week/interest/commits
       router.refresh();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to advance recruiting week.");
     } finally {
-      setBusy(false);
+      setPending(false);
     }
   }
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="flex flex-col gap-2">
       <button
         type="button"
-        onClick={onClick}
-        disabled={Boolean(disabled) || busy}
-        style={{
-          width: "100%",
-          padding: "10px 12px",
-          borderRadius: 12,
-          border: "1px solid rgba(0,0,0,0.15)",
-          fontWeight: 900,
-          cursor: Boolean(disabled) || busy ? "not-allowed" : "pointer",
-          opacity: Boolean(disabled) || busy ? 0.7 : 1,
-        }}
+        onClick={onAdvance}
+        disabled={pending}
+        className="px-3 py-2 rounded-md border border-white/15 bg-white/10 hover:bg-white/15 disabled:opacity-50"
       >
-        {busy ? "Advancing…" : "Advance Week"}
+        {pending ? "Processing..." : "Advance Week"}
       </button>
 
-      {status ? (
-        <div style={{ fontSize: 12, opacity: 0.85, whiteSpace: "pre-wrap" }}>
-          {status}
+      {error ? (
+        <div className="text-sm text-red-300">
+          {error}
         </div>
       ) : null}
     </div>
