@@ -7,14 +7,16 @@ function enc(s: string) {
 }
 
 /**
- * Generic FBS-style presets: real locations, generic mascots (no real school nicknames).
- * Add/adjust as desired. Keep it “enough to start” and expandable later.
+ * Presets:
+ * - fbs-lite uses existing RPC create_league_with_teams(p_name, p_team_names[])
+ * - fbs-full uses new RPC create_league_fbs_full_v1(p_name) and seeds from DB templates
  */
-const PRESETS: { id: string; name: string; description: string; teams: string[] }[] = [
+const PRESETS: { id: string; name: string; description: string; kind: "NAMES" | "DB_TEMPLATES"; teams?: string[] }[] = [
   {
     id: "fbs-lite",
     name: "FBS Lite (64 teams)",
     description: "Fast start. 8 conferences of 8 teams.",
+    kind: "NAMES",
     teams: [
       // Atlantic
       "Boston Harbor Hawks",
@@ -99,9 +101,9 @@ const PRESETS: { id: string; name: string; description: string; teams: string[] 
   },
   {
     id: "fbs-full",
-    name: "FBS Full (134 teams) — Coming Next",
-    description: "Placeholder for the full conference map. Use Lite for now.",
-    teams: [] // intentionally empty for now
+    name: "FBS Full (134 teams)",
+    description: "Uses your DB templates (public.fbs_team_templates) to seed a full FBS-style world.",
+    kind: "DB_TEMPLATES"
   }
 ];
 
@@ -116,16 +118,28 @@ async function createLeagueAction(formData: FormData) {
   const preset = PRESETS.find((p) => p.id === presetId);
   if (!preset) redirect(`/league/new?err=${enc("Please choose a preset.")}`);
 
-  if (!preset.teams || preset.teams.length < 2) {
-    redirect(`/league/new?err=${enc("That preset is not available yet. Choose FBS Lite.")}`);
-  }
-
   const supabase = supabaseServer();
 
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // Call your RPC function
+  // Choose RPC based on preset kind
+  if (preset.kind === "DB_TEMPLATES") {
+    const { data: leagueId, error } = await supabase.rpc("create_league_fbs_full_v1", {
+      p_name: name
+    });
+
+    if (error) redirect(`/league/new?err=${enc(error.message)}`);
+    if (!leagueId) redirect(`/league/new?err=${enc("League was not created. Try again.")}`);
+
+    redirect(`/league/${leagueId}?msg=${enc("League created (FBS Full).")}`);
+  }
+
+  // NAMES preset (existing path)
+  if (!preset.teams || preset.teams.length < 2) {
+    redirect(`/league/new?err=${enc("That preset is not available yet.")}`);
+  }
+
   const { data: leagueId, error } = await supabase.rpc("create_league_with_teams", {
     p_name: name,
     p_team_names: preset.teams
@@ -163,15 +177,15 @@ export default async function NewLeaguePage({
 
           <div className="col12">
             <label className="label">Preset Team Set</label>
-            <select className="input" name="preset" defaultValue="fbs-lite">
+            <select className="input" name="preset" defaultValue="fbs-full">
               {PRESETS.map((p) => (
-                <option key={p.id} value={p.id} disabled={p.teams.length === 0}>
+                <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
             </select>
             <p className="muted" style={{ marginTop: 6 }}>
-              Tip: Start with Lite to validate gameplay loops. We can expand to full FBS once everything is stable.
+              FBS Full requires your templates table to be populated (public.fbs_team_templates).
             </p>
           </div>
 
