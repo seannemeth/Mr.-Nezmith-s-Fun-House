@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 type UUID = string;
 
 type RecruitRow = {
-  id: UUID; // kept internally, NEVER rendered
+  id: UUID; // internal only, NEVER rendered
   name: string;
   position: string;
   stars: number;
@@ -15,16 +15,23 @@ type RecruitRow = {
   height_in: number | null;
   weight_lb: number | null;
 
-  // optional fields you might already have
-  interest?: number | null; // "My Interest" if you compute it
+  // optional/derived
+  interest?: number | null; // "My Interest" if available from view
   offered?: boolean | null;
   on_board?: boolean | null;
 };
 
+type LeagueRow = {
+  season?: number | null;
+  week?: number | null;
+  current_season?: number | null;
+  current_week?: number | null;
+  active_season?: number | null;
+  active_week?: number | null;
+};
+
 type FinanceRow = {
   cash_balance: number;
-  season: number;
-  week: number;
 };
 
 type ContactType = 'text' | 'dm' | 'social' | 'call' | 'coach_visit' | 'home_visit';
@@ -38,7 +45,6 @@ const CONTACT_TYPES: { key: ContactType; label: string }[] = [
   { key: 'home_visit', label: 'Home Visit' },
 ];
 
-// Uses env vars (standard Next.js)
 function supabaseBrowser() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -70,6 +76,26 @@ type SortKey =
   | 'stars'
   | 'interest';
 
+function pickSeasonWeek(league: LeagueRow | null): { season: number; week: number } {
+  const season =
+    Number(
+      league?.current_season ??
+        league?.season ??
+        league?.active_season ??
+        1
+    ) || 1;
+
+  const week =
+    Number(
+      league?.current_week ??
+        league?.week ??
+        league?.active_week ??
+        1
+    ) || 1;
+
+  return { season, week };
+}
+
 export default function RecruitingClient({
   leagueId,
   teamId,
@@ -82,7 +108,10 @@ export default function RecruitingClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [finance, setFinance] = useState<FinanceRow | null>(null);
+  const [season, setSeason] = useState<number>(1);
+  const [week, setWeek] = useState<number>(1);
+
+  const [cash, setCash] = useState<number>(0);
   const [recruits, setRecruits] = useState<RecruitRow[]>([]);
 
   const [expanded, setExpanded] = useState<UUID | null>(null);
@@ -95,12 +124,41 @@ export default function RecruitingClient({
   const [sortKey, setSortKey] = useState<SortKey>('stars');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const season = finance?.season ?? 1;
-  const week = finance?.week ?? 1;
-
   function usedKey(recruitId: UUID, contactType: ContactType) {
-    // internal key only, never displayed
-    return `${recruitId}:${contactType}`;
+    return `${recruitId}:${contactType}`; // internal only
+  }
+
+  async function trySelectRecruitsFrom(
+    table: string,
+    useLeagueFilter: boolean
+  ): Promise<RecruitRow[] | null> {
+    // Different views/tables may expose different columns.
+    // We try a superset list; missing columns will error, and we’ll fall back.
+    const baseSelect =
+      'id,name,position,stars,archetype,height_in,weight_lb,my_interest,offered,on_board';
+
+    let q = supabase.from(table).select(baseSelect).limit(500);
+
+    if (useLeagueFilter) q = q.eq('league_id', leagueId);
+
+    const { data, error } = await q;
+
+    if (error) return null;
+
+    const mapped: RecruitRow[] = (data ?? []).map((r: any) => ({
+      id: String(r.id),
+      name: r.name ?? 'Unknown',
+      position: r.position ?? '—',
+      stars: Number(r.stars ?? 0),
+      archetype: r.archetype ?? null,
+      height_in: r.height_in ?? null,
+      weight_lb: r.weight_lb ?? null,
+      interest: r.my_interest ?? r.interest ?? null,
+      offered: r.offered ?? null,
+      on_board: r.on_board ?? null,
+    }));
+
+    return mapped;
   }
 
   async function loadAll() {
@@ -108,68 +166,79 @@ export default function RecruitingClient({
     setError(null);
 
     try {
-      // 1) finance header data (cash/season/week)
-      // NOTE: adjust query if your team_finances schema differs
+      // 1) league season/week (authoritative)
+      const { data: league, error: leagueErr } = await supabase
+        .from('leagues')
+        .select('*')
+        .eq('id', leagueId)
+        .maybeSingle();
+
+      if (leagueErr) throw leagueErr;
+
+      const sw = pickSeasonWeek(league as any);
+      setSeason(sw.season);
+      setWeek(sw.week);
+
+      // 2) cash (do NOT assume week column exists)
+      // We just grab latest cash_balance row we can find.
       const { data: fin, error: finErr } = await supabase
         .from('team_finances')
-        .select('cash_balance, season, week')
+        .select('cash_balance')
         .eq('league_id', leagueId)
         .eq('team_id', teamId)
         .order('season', { ascending: false })
-        .order('week', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (finErr) throw finErr;
-      if (!fin) {
-        setFinance({ cash_balance: 0, season: 1, week: 1 });
+      // If team_finances also lacks season, order() might fail. If it fails, fallback to first row.
+      if (finErr) {
+        const { data: fin2, error: fin2Err } = await supabase
+          .from('team_finances')
+          .select('cash_balance')
+          .eq('league_id', leagueId)
+          .eq('team_id', teamId)
+          .limit(1)
+          .maybeSingle();
+
+        if (fin2Err) throw fin2Err;
+        setCash(Number((fin2 as any)?.cash_balance ?? 0));
       } else {
-        setFinance(fin as FinanceRow);
+        setCash(Number((fin as any)?.cash_balance ?? 0));
       }
 
-      const resolvedSeason = (fin as FinanceRow | null)?.season ?? 1;
-      const resolvedWeek = (fin as FinanceRow | null)?.week ?? 1;
+      // 3) recruits: try views first, then fallback tables
+      //    Most likely you have a recruiting view that already joins interest/board/offer flags.
+      const sources: Array<{ table: string; leagueFilter: boolean }> = [
+        { table: 'recruiting_recruits_v1', leagueFilter: true },
+        { table: 'recruiting_recruits', leagueFilter: true },
+        { table: 'league_recruits', leagueFilter: true },
+        { table: 'recruits', leagueFilter: true },  // try league_id if present
+        { table: 'recruits', leagueFilter: false }, // last resort: global pool
+      ];
 
-      // 2) recruit list
-      // NOTE: adjust fields to match your recruits table/view
-      const { data: recs, error: recErr } = await supabase
-        .from('recruits')
-        .select('id, name, position, stars, archetype, height_in, weight_lb')
-        .eq('league_id', leagueId)
-        .order('stars', { ascending: false })
-        .limit(500);
+      let loaded: RecruitRow[] | null = null;
 
-      if (recErr) throw recErr;
+      for (const s of sources) {
+        loaded = await trySelectRecruitsFrom(s.table, s.leagueFilter);
+        if (loaded) break;
+      }
 
-      const mapped: RecruitRow[] = (recs ?? []).map((r: any) => ({
-        id: r.id,
-        name: r.name ?? 'Unknown',
-        position: r.position ?? '—',
-        stars: Number(r.stars ?? 0),
-        archetype: r.archetype ?? null,
-        height_in: r.height_in ?? null,
-        weight_lb: r.weight_lb ?? null,
-        interest: null,
-        offered: null,
-        on_board: null,
-      }));
+      setRecruits(loaded ?? []);
 
-      setRecruits(mapped);
-
-      // 3) load used contacts for current season/week
+      // 4) used contacts for season/week
       const { data: contacts, error: cErr } = await supabase
         .from('recruiting_contacts')
         .select('recruit_id, contact_type')
         .eq('league_id', leagueId)
         .eq('team_id', teamId)
-        .eq('season', resolvedSeason)
-        .eq('week', resolvedWeek);
+        .eq('season', sw.season)
+        .eq('week', sw.week);
 
       if (cErr) throw cErr;
 
       const used: Record<string, boolean> = {};
       (contacts ?? []).forEach((c: any) => {
-        used[usedKey(c.recruit_id, c.contact_type)] = true;
+        used[usedKey(String(c.recruit_id), c.contact_type)] = true;
       });
       setUsedContacts(used);
       setWeeklyUsed((contacts ?? []).length);
@@ -204,7 +273,6 @@ export default function RecruitingClient({
       const av: any = (a as any)[sortKey];
       const bv: any = (b as any)[sortKey];
 
-      // strings
       if (typeof av === 'string' || typeof bv === 'string') {
         const as = (av ?? '').toString().toLowerCase();
         const bs = (bv ?? '').toString().toLowerCase();
@@ -213,7 +281,6 @@ export default function RecruitingClient({
         return 0;
       }
 
-      // numbers/nulls
       const an = Number(av ?? -Infinity);
       const bn = Number(bv ?? -Infinity);
       if (an < bn) return -1 * dir;
@@ -226,9 +293,8 @@ export default function RecruitingClient({
 
   async function applyContact(recruitId: UUID, contactType: ContactType) {
     const k = usedKey(recruitId, contactType);
-    if (usedContacts[k]) return; // hard client guard
+    if (usedContacts[k]) return;
 
-    // Optimistic: mark used immediately to prevent double-click
     setUsedContacts((prev) => ({ ...prev, [k]: true }));
     setWeeklyUsed((n) => n + 1);
 
@@ -243,11 +309,11 @@ export default function RecruitingClient({
       });
 
       if (rpcErr) {
-        // If DB says unique constraint, keep UI used anyway.
-        // If it's a different error, revert.
         const msg = (rpcErr.message ?? '').toLowerCase();
         const isUnique =
-          msg.includes('duplicate key') || msg.includes('unique') || msg.includes('recruiting_contacts_unique_weekly');
+          msg.includes('duplicate key') ||
+          msg.includes('unique') ||
+          msg.includes('recruiting_contacts_unique_weekly');
 
         if (!isUnique) {
           setUsedContacts((prev) => {
@@ -274,8 +340,6 @@ export default function RecruitingClient({
         p_week: week,
       });
       if (rpcErr) throw rpcErr;
-
-      // Refresh row state (simple reload)
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? 'Failed to toggle offer');
@@ -284,7 +348,6 @@ export default function RecruitingClient({
 
   async function toggleBoard(recruitId: UUID) {
     try {
-      // Upsert ignoreDuplicates pattern (assumes recruiting_board table exists)
       const { error: upErr } = await supabase
         .from('recruiting_board')
         .upsert(
@@ -299,18 +362,14 @@ export default function RecruitingClient({
         );
 
       if (upErr) throw upErr;
-
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? 'Failed to add to board');
     }
   }
 
-  // ---- UI helpers
-  const headerCash = finance ? `$${(finance.cash_balance ?? 0).toLocaleString()}` : '—';
+  const headerCash = `$${Number(cash ?? 0).toLocaleString()}`;
 
-  // Make table horizontally scrollable and ensure right actions not clipped
-  // Sticky right column keeps Offer/Board visible
   return (
     <div className="w-full">
       {/* Header */}
@@ -349,9 +408,8 @@ export default function RecruitingClient({
         </div>
       )}
 
-      {/* Scroll container fixes "right side cut off" */}
+      {/* Scroll container fixes right-side cut-off */}
       <div className="w-full overflow-x-auto rounded-xl border">
-        {/* Give the grid a minimum width so columns don’t crush, and allow scrolling */}
         <div className="min-w-[1100px]">
           {/* Table header */}
           <div
@@ -382,11 +440,7 @@ export default function RecruitingClient({
             <button className="text-left hover:underline" onClick={() => toggleSort('interest')}>
               My Interest {sortKey === 'interest' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
             </button>
-
-            {/* Sticky Actions header */}
-            <div className="sticky right-0 bg-black/5 pl-2">
-              Actions
-            </div>
+            <div className="sticky right-0 bg-black/5 pl-2">Actions</div>
           </div>
 
           {/* Rows */}
@@ -399,7 +453,6 @@ export default function RecruitingClient({
 
                 return (
                   <div key={r.id} className="border-b">
-                    {/* Row */}
                     <div
                       className="grid items-center gap-2 px-3 py-2 text-sm"
                       style={{
@@ -422,7 +475,6 @@ export default function RecruitingClient({
                       <div>{r.stars ? '★'.repeat(clamp(r.stars, 0, 5)) : '—'}</div>
                       <div>{r.interest ?? '—'}</div>
 
-                      {/* Sticky right action cell (prevents cut-off) */}
                       <div className="sticky right-0 bg-white pl-2">
                         <div className="flex flex-wrap items-center gap-2 justify-end">
                           <button
@@ -441,12 +493,9 @@ export default function RecruitingClient({
                       </div>
                     </div>
 
-                    {/* Expanded panel */}
                     {isOpen && (
                       <div className="bg-black/2 px-3 pb-3">
-                        {/* IMPORTANT: no IDs shown here */}
                         <div className="grid gap-3 pt-2 md:grid-cols-2">
-                          {/* Contacts */}
                           <div className="rounded-xl border bg-white p-3">
                             <div className="mb-2 text-xs font-semibold opacity-70">Contacts</div>
                             <div className="flex flex-wrap gap-2">
@@ -473,14 +522,8 @@ export default function RecruitingClient({
                             </div>
                           </div>
 
-                          {/* Visits (hook your existing RPCs if you want) */}
                           <div className="rounded-xl border bg-white p-3">
                             <div className="mb-2 text-xs font-semibold opacity-70">Official Visit</div>
-                            <div className="text-xs opacity-70">
-                              If you already have your visit scheduler RPC wired elsewhere, keep it there. This panel is
-                              intentionally ID-free.
-                            </div>
-
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button
                                 className="rounded-lg border px-3 py-2 text-xs hover:bg-black/5"
@@ -527,7 +570,6 @@ export default function RecruitingClient({
                           </div>
                         </div>
 
-                        {/* bottom padding */}
                         <div className="h-2" />
                       </div>
                     )}
@@ -536,7 +578,13 @@ export default function RecruitingClient({
               })}
 
               {sortedRecruits.length === 0 && (
-                <div className="px-3 py-6 text-sm opacity-70">No recruits found.</div>
+                <div className="px-3 py-6 text-sm opacity-70">
+                  No recruits found.
+                  <div className="mt-2 text-xs opacity-70">
+                    If you expect recruits: you likely have a recruiting view (e.g. <code className="font-mono">recruiting_recruits_v1</code>)
+                    or your recruits table is not league-scoped.
+                  </div>
+                </div>
               )}
             </div>
           )}
