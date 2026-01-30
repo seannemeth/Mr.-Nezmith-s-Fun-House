@@ -183,11 +183,7 @@ export default function RecruitingClient(props: {
     let list = rows;
 
     if (view === "board") list = list.filter((r) => Boolean(r.on_board));
-    if (q) {
-      list = list.filter(
-        (r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q)
-      );
-    }
+    if (q) list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
 
     return list.slice().sort((a, b) => {
       if (sort === "interest") return Number(b.my_interest ?? 0) - Number(a.my_interest ?? 0);
@@ -293,7 +289,7 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
 
-    // optimistic
+    // optimistic: scheduled but not applied yet
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -303,30 +299,18 @@ export default function RecruitingClient(props: {
     );
 
     try {
-      // one visit per recruit/team
-      const { error: delErr } = await supabase
-        .from("recruit_visits")
-        .delete()
-        .eq("league_id", props.leagueId)
-        .eq("team_id", props.teamId)
-        .eq("recruit_id", rid);
-      if (delErr) throw new Error(delErr.message);
-
-      // ✅ FIX: use bonus (not visit_bonus)
-      const { error: insErr } = await supabase.from("recruit_visits").insert({
-        league_id: props.leagueId,
-        team_id: props.teamId,
-        recruit_id: rid,
-        week: chosenWeek,
-        bonus: 5,
+      const { error: rpcErr } = await supabase.rpc("schedule_recruit_visit_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_week: chosenWeek,
+        p_bonus: 5,
       });
 
-      if (insErr) throw new Error(insErr.message);
+      if (rpcErr) throw new Error(rpcErr.message);
     } catch (e: any) {
       setRows((prev) =>
-        prev.map((x) =>
-          x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x
-        )
+        prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
       );
       setError(e?.message ?? "Failed to schedule visit.");
     } finally {
@@ -343,17 +327,18 @@ export default function RecruitingClient(props: {
     const prevWeek = r.my_visit_week ?? null;
     const prevBonus = r.my_visit_bonus ?? null;
 
-    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x)));
+    setRows((prev) =>
+      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+    );
 
     try {
-      const { error: delErr } = await supabase
-        .from("recruit_visits")
-        .delete()
-        .eq("league_id", props.leagueId)
-        .eq("team_id", props.teamId)
-        .eq("recruit_id", rid);
+      const { error: rpcErr } = await supabase.rpc("remove_recruit_visit_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+      });
 
-      if (delErr) throw new Error(delErr.message);
+      if (rpcErr) throw new Error(rpcErr.message);
     } catch (e: any) {
       setRows((prev) =>
         prev.map((x) =>
@@ -514,7 +499,6 @@ export default function RecruitingClient(props: {
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px", display: "grid", gap: 14 }}>
-                  {/* VISIT */}
                   <div>
                     <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Visit</div>
 
@@ -596,7 +580,6 @@ export default function RecruitingClient(props: {
                     </div>
                   </div>
 
-                  {/* TOP 8 */}
                   <div>
                     <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Top 8</div>
 
