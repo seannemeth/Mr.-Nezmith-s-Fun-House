@@ -16,11 +16,9 @@ type Recruit = Record<string, any> & {
   top8?: Top8Entry[];
   on_board?: boolean;
 
-  // visits
   my_visit_week?: number | null;
   my_visit_bonus?: number | null;
 
-  // indicator from recruit_interests
   my_visit_applied?: boolean;
 };
 
@@ -89,24 +87,15 @@ function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "neu
 }
 
 function getName(r: Recruit) {
-  return (
-    r.name ??
-    r.full_name ??
-    [r.first_name, r.last_name].filter(Boolean).join(" ") ??
-    r.player_name ??
-    "Recruit"
-  );
+  return r.name ?? r.full_name ?? [r.first_name, r.last_name].filter(Boolean).join(" ") ?? "Recruit";
 }
-
 function getPos(r: Recruit) {
-  return r.position ?? r.pos ?? r.player_position ?? "";
+  return r.position ?? r.pos ?? "";
 }
-
 function getStars(r: Recruit) {
   const s = r.stars ?? r.rating_stars ?? r.star_rating;
   return s == null ? "" : String(s);
 }
-
 function getOfferFlag(r: Recruit) {
   return Boolean(r.offer_made ?? r.has_offer ?? r.offered ?? r.offer ?? false);
 }
@@ -183,8 +172,6 @@ export default function RecruitingClient(props: {
   const [view, setView] = React.useState<"all" | "board">("all");
   const [error, setError] = React.useState<string | null>(null);
   const [hover, setHover] = React.useState<string | null>(null);
-
-  // per-recruit visit week selector
   const [visitWeekChoice, setVisitWeekChoice] = React.useState<Record<string, number>>({});
 
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
@@ -196,7 +183,6 @@ export default function RecruitingClient(props: {
     let list = rows;
 
     if (view === "board") list = list.filter((r) => Boolean(r.on_board));
-
     if (q) {
       list = list.filter(
         (r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q)
@@ -217,7 +203,6 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
-    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -246,7 +231,6 @@ export default function RecruitingClient(props: {
         if (delErr) throw new Error(delErr.message);
       }
     } catch (e: any) {
-      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
@@ -267,7 +251,6 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`board:${rid}`]: true }));
 
-    // optimistic
     setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: !wasOn } : x)));
 
     try {
@@ -290,7 +273,6 @@ export default function RecruitingClient(props: {
         if (delErr) throw new Error(delErr.message);
       }
     } catch (e: any) {
-      // revert
       setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: wasOn } : x)));
       setError(e?.message ?? "Failed to update board.");
     } finally {
@@ -311,22 +293,17 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
 
-    // optimistic: scheduled but not applied yet
+    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
-          ? {
-              ...x,
-              my_visit_week: chosenWeek,
-              my_visit_bonus: x.my_visit_bonus ?? 5,
-              my_visit_applied: false,
-            }
+          ? { ...x, my_visit_week: chosenWeek, my_visit_bonus: x.my_visit_bonus ?? 5, my_visit_applied: false }
           : x
       )
     );
 
     try {
-      // One visit per recruit/team (simple). If you want multiple visits, we’ll change this.
+      // one visit per recruit/team
       const { error: delErr } = await supabase
         .from("recruit_visits")
         .delete()
@@ -335,24 +312,20 @@ export default function RecruitingClient(props: {
         .eq("recruit_id", rid);
       if (delErr) throw new Error(delErr.message);
 
+      // ✅ FIX: use bonus (not visit_bonus)
       const { error: insErr } = await supabase.from("recruit_visits").insert({
         league_id: props.leagueId,
         team_id: props.teamId,
         recruit_id: rid,
         week: chosenWeek,
-        visit_bonus: 5, // ok even if column doesn't exist (ignored by PostgREST if not in schema cache? Usually errors if unknown.)
-      } as any);
+        bonus: 5,
+      });
 
-      // If your recruit_visits table uses "bonus" not "visit_bonus" and PostgREST rejects unknown keys,
-      // change the insert to { bonus: 5 }.
       if (insErr) throw new Error(insErr.message);
     } catch (e: any) {
-      // revert: remove scheduled visit
       setRows((prev) =>
         prev.map((x) =>
-          x._recruit_id === rid
-            ? { ...x, my_visit_week: null, my_visit_bonus: null, my_visit_applied: x.my_visit_applied ?? false }
-            : x
+          x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x
         )
       );
       setError(e?.message ?? "Failed to schedule visit.");
@@ -370,10 +343,7 @@ export default function RecruitingClient(props: {
     const prevWeek = r.my_visit_week ?? null;
     const prevBonus = r.my_visit_bonus ?? null;
 
-    // optimistic: remove visit; applied flag stays whatever it was (it reflects interest row history)
-    setRows((prev) =>
-      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
-    );
+    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x)));
 
     try {
       const { error: delErr } = await supabase
@@ -385,7 +355,6 @@ export default function RecruitingClient(props: {
 
       if (delErr) throw new Error(delErr.message);
     } catch (e: any) {
-      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid ? { ...x, my_visit_week: prevWeek, my_visit_bonus: prevBonus } : x
@@ -534,11 +503,7 @@ export default function RecruitingClient(props: {
                 <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getStars(r)}</div>
                 <InterestBar value={myInterest} />
 
-                <ActionButton
-                  variant="secondary"
-                  onClick={() => onToggleBoard(r)}
-                  disabled={Boolean(busy[`board:${rid}`])}
-                >
+                <ActionButton variant="secondary" onClick={() => onToggleBoard(r)} disabled={Boolean(busy[`board:${rid}`])}>
                   {busy[`board:${rid}`] ? "…" : onBoard ? "On Board" : "Add"}
                 </ActionButton>
 
@@ -549,7 +514,7 @@ export default function RecruitingClient(props: {
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px", display: "grid", gap: 14 }}>
-                  {/* VISIT BOX */}
+                  {/* VISIT */}
                   <div>
                     <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Visit</div>
 
@@ -570,8 +535,7 @@ export default function RecruitingClient(props: {
                         <div style={{ fontWeight: 800, opacity: 0.95 }}>
                           {scheduledWeek ? (
                             <>
-                              Scheduled:{" "}
-                              <span style={{ fontVariantNumeric: "tabular-nums" }}>Week {scheduledWeek}</span>
+                              Scheduled: <span style={{ fontVariantNumeric: "tabular-nums" }}>Week {scheduledWeek}</span>
                               {scheduledBonus != null ? <span style={{ opacity: 0.85 }}> • (+{scheduledBonus})</span> : null}
                             </>
                           ) : (
@@ -615,27 +579,15 @@ export default function RecruitingClient(props: {
                         </select>
 
                         {!scheduledWeek ? (
-                          <ActionButton
-                            variant="secondary"
-                            disabled={Boolean(busy[`visit:${rid}`])}
-                            onClick={() => onScheduleVisit(r)}
-                          >
+                          <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
                             {busy[`visit:${rid}`] ? "…" : "Schedule Visit"}
                           </ActionButton>
                         ) : (
                           <>
-                            <ActionButton
-                              variant="secondary"
-                              disabled={Boolean(busy[`visit:${rid}`])}
-                              onClick={() => onScheduleVisit(r)}
-                            >
+                            <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
                               {busy[`visit:${rid}`] ? "…" : "Reschedule"}
                             </ActionButton>
-                            <ActionButton
-                              variant="danger"
-                              disabled={Boolean(busy[`visit:${rid}`])}
-                              onClick={() => onRemoveVisit(r)}
-                            >
+                            <ActionButton variant="danger" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onRemoveVisit(r)}>
                               {busy[`visit:${rid}`] ? "…" : "Remove"}
                             </ActionButton>
                           </>
