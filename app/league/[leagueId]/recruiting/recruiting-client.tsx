@@ -16,9 +16,12 @@ type Recruit = Record<string, any> & {
   top8?: Top8Entry[];
   on_board?: boolean;
 
-  // ✅ visits
+  // visits
   my_visit_week?: number | null;
   my_visit_bonus?: number | null;
+
+  // indicator from recruit_interests
+  my_visit_applied?: boolean;
 };
 
 function clamp(n: number, min = 0, max = 100) {
@@ -45,6 +48,43 @@ function InterestBar({ value }: { value: number }) {
         {v}
       </div>
     </div>
+  );
+}
+
+function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "neutral" }) {
+  const styles: Record<string, React.CSSProperties> = {
+    ok: {
+      background: "rgba(120, 255, 160, 0.16)",
+      border: "1px solid rgba(120, 255, 160, 0.30)",
+      color: "rgba(230, 255, 240, 0.95)",
+    },
+    warn: {
+      background: "rgba(255, 210, 120, 0.16)",
+      border: "1px solid rgba(255, 210, 120, 0.30)",
+      color: "rgba(255, 245, 230, 0.95)",
+    },
+    neutral: {
+      background: "rgba(255,255,255,0.10)",
+      border: "1px solid rgba(255,255,255,0.16)",
+      color: "rgba(255,255,255,0.90)",
+    },
+  };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontWeight: 900,
+        fontSize: 12,
+        ...styles[tone],
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -96,10 +136,10 @@ function ActionButton(props: {
   onClick: () => void;
   children: React.ReactNode;
 }) {
-  const base = {
+  const base: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 10,
-    fontWeight: 900 as const,
+    fontWeight: 900,
     letterSpacing: "0.2px",
     border: "1px solid rgba(255,255,255,0.18)",
     cursor: props.disabled ? "not-allowed" : "pointer",
@@ -128,7 +168,7 @@ export default function RecruitingClient(props: {
   teamId: string;
   recruits: Recruit[];
   currentSeason: number;
-  currentWeek: number; // ✅ add
+  currentWeek: number;
 }) {
   const supabase = React.useMemo(
     () => createBrowserClient(props.supabaseUrl, props.supabaseAnonKey),
@@ -144,7 +184,7 @@ export default function RecruitingClient(props: {
   const [error, setError] = React.useState<string | null>(null);
   const [hover, setHover] = React.useState<string | null>(null);
 
-  // visit week selector per recruit
+  // per-recruit visit week selector
   const [visitWeekChoice, setVisitWeekChoice] = React.useState<Record<string, number>>({});
 
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
@@ -177,6 +217,7 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
+    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -205,6 +246,7 @@ export default function RecruitingClient(props: {
         if (delErr) throw new Error(delErr.message);
       }
     } catch (e: any) {
+      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
@@ -225,6 +267,7 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`board:${rid}`]: true }));
 
+    // optimistic
     setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: !wasOn } : x)));
 
     try {
@@ -247,6 +290,7 @@ export default function RecruitingClient(props: {
         if (delErr) throw new Error(delErr.message);
       }
     } catch (e: any) {
+      // revert
       setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: wasOn } : x)));
       setError(e?.message ?? "Failed to update board.");
     } finally {
@@ -255,7 +299,6 @@ export default function RecruitingClient(props: {
   }
 
   function getDefaultVisitWeek(r: Recruit) {
-    // default to next week unless already scheduled
     const scheduled = Number(r.my_visit_week ?? 0);
     if (scheduled > 0) return scheduled;
     return Math.min(16, Math.max(1, props.currentWeek + 1));
@@ -268,39 +311,49 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
 
-    // optimistic
+    // optimistic: scheduled but not applied yet
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
-          ? { ...x, my_visit_week: chosenWeek, my_visit_bonus: x.my_visit_bonus ?? 5 }
+          ? {
+              ...x,
+              my_visit_week: chosenWeek,
+              my_visit_bonus: x.my_visit_bonus ?? 5,
+              my_visit_applied: false,
+            }
           : x
       )
     );
 
     try {
-      // Upsert: delete any existing visit for this recruit/team in this league (simple)
-      // If you allow multiple visits, remove this delete and keep unique(league,team,recruit,week)
-      await supabase
+      // One visit per recruit/team (simple). If you want multiple visits, we’ll change this.
+      const { error: delErr } = await supabase
         .from("recruit_visits")
         .delete()
         .eq("league_id", props.leagueId)
         .eq("team_id", props.teamId)
         .eq("recruit_id", rid);
+      if (delErr) throw new Error(delErr.message);
 
       const { error: insErr } = await supabase.from("recruit_visits").insert({
         league_id: props.leagueId,
         team_id: props.teamId,
         recruit_id: rid,
         week: chosenWeek,
-        // visit_bonus will default if column exists; harmless if ignored
-        visit_bonus: 5,
+        visit_bonus: 5, // ok even if column doesn't exist (ignored by PostgREST if not in schema cache? Usually errors if unknown.)
       } as any);
 
+      // If your recruit_visits table uses "bonus" not "visit_bonus" and PostgREST rejects unknown keys,
+      // change the insert to { bonus: 5 }.
       if (insErr) throw new Error(insErr.message);
     } catch (e: any) {
-      // revert optimistic (wipe visit)
+      // revert: remove scheduled visit
       setRows((prev) =>
-        prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+        prev.map((x) =>
+          x._recruit_id === rid
+            ? { ...x, my_visit_week: null, my_visit_bonus: null, my_visit_applied: x.my_visit_applied ?? false }
+            : x
+        )
       );
       setError(e?.message ?? "Failed to schedule visit.");
     } finally {
@@ -317,7 +370,10 @@ export default function RecruitingClient(props: {
     const prevWeek = r.my_visit_week ?? null;
     const prevBonus = r.my_visit_bonus ?? null;
 
-    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x)));
+    // optimistic: remove visit; applied flag stays whatever it was (it reflects interest row history)
+    setRows((prev) =>
+      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+    );
 
     try {
       const { error: delErr } = await supabase
@@ -329,6 +385,7 @@ export default function RecruitingClient(props: {
 
       if (delErr) throw new Error(delErr.message);
     } catch (e: any) {
+      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid ? { ...x, my_visit_week: prevWeek, my_visit_bonus: prevBonus } : x
@@ -433,7 +490,7 @@ export default function RecruitingClient(props: {
           const rowHover = hover === rid;
 
           const scheduledWeek = r.my_visit_week ? Number(r.my_visit_week) : null;
-          const scheduledBonus = r.my_visit_bonus ? Number(r.my_visit_bonus) : null;
+          const scheduledBonus = r.my_visit_bonus != null ? Number(r.my_visit_bonus) : null;
 
           const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
 
@@ -492,7 +549,7 @@ export default function RecruitingClient(props: {
 
               {open ? (
                 <div style={{ padding: "0 12px 12px 48px", display: "grid", gap: 14 }}>
-                  {/* VISITS */}
+                  {/* VISIT BOX */}
                   <div>
                     <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Visit</div>
 
@@ -506,20 +563,29 @@ export default function RecruitingClient(props: {
                         background: "rgba(255,255,255,0.05)",
                         borderRadius: 14,
                         padding: 10,
-                        maxWidth: 740,
+                        maxWidth: 760,
                       }}
                     >
-                      <div style={{ fontWeight: 800, opacity: 0.95 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 800, opacity: 0.95 }}>
+                          {scheduledWeek ? (
+                            <>
+                              Scheduled:{" "}
+                              <span style={{ fontVariantNumeric: "tabular-nums" }}>Week {scheduledWeek}</span>
+                              {scheduledBonus != null ? <span style={{ opacity: 0.85 }}> • (+{scheduledBonus})</span> : null}
+                            </>
+                          ) : (
+                            <span style={{ opacity: 0.85 }}>No visit scheduled.</span>
+                          )}
+                        </div>
+
                         {scheduledWeek ? (
-                          <>
-                            Scheduled: <span style={{ fontVariantNumeric: "tabular-nums" }}>Week {scheduledWeek}</span>
-                            {scheduledBonus != null ? (
-                              <span style={{ opacity: 0.85 }}> • (+{scheduledBonus})</span>
-                            ) : null}
-                          </>
-                        ) : (
-                          <span style={{ opacity: 0.85 }}>No visit scheduled.</span>
-                        )}
+                          r.my_visit_applied ? (
+                            <StatusPill label="Applied ✅" tone="ok" />
+                          ) : (
+                            <StatusPill label="Pending" tone="warn" />
+                          )
+                        ) : null}
                       </div>
 
                       <div style={{ flex: 1 }} />
@@ -528,9 +594,7 @@ export default function RecruitingClient(props: {
                         <label style={{ fontWeight: 800, opacity: 0.9 }}>Week</label>
                         <select
                           value={chosenWeek}
-                          onChange={(e) =>
-                            setVisitWeekChoice((m) => ({ ...m, [rid]: Number(e.target.value) }))
-                          }
+                          onChange={(e) => setVisitWeekChoice((m) => ({ ...m, [rid]: Number(e.target.value) }))}
                           style={{
                             padding: "10px 12px",
                             borderRadius: 10,
