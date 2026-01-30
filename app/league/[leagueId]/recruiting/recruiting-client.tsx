@@ -20,11 +20,12 @@ type Recruit = Record<string, any> & {
   my_visit_bonus?: number | null;
   my_visit_applied?: boolean;
 
-  // NEW fields (from recruits table)
   height_in?: number | null;
   weight_lb?: number | null;
   archetype?: string | null;
 };
+
+type ContactType = "call" | "text" | "dm" | "social" | "coach_visit" | "home_visit";
 
 function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
@@ -191,6 +192,39 @@ function ActionButton(props: {
   );
 }
 
+function ContactButton(props: {
+  used: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const base: React.CSSProperties = {
+    padding: "10px 12px",
+    borderRadius: 10,
+    fontWeight: 900,
+    letterSpacing: "0.2px",
+    border: "1px solid rgba(255,255,255,0.18)",
+    cursor: props.disabled ? "not-allowed" : "pointer",
+    opacity: props.disabled ? 0.70 : 1,
+    color: "rgba(255,255,255,0.98)",
+    background: "rgba(255,255,255,0.10)",
+  };
+
+  const usedStyle: React.CSSProperties = props.used
+    ? {
+        background: "rgba(120, 255, 160, 0.16)",
+        border: "1px solid rgba(120, 255, 160, 0.30)",
+        color: "rgba(230, 255, 240, 0.95)",
+      }
+    : {};
+
+  return (
+    <button onClick={props.onClick} disabled={props.disabled} style={{ ...base, ...usedStyle }}>
+      {props.children}
+    </button>
+  );
+}
+
 type SortKey = "name" | "pos" | "arch" | "ht" | "wt" | "stars" | "interest";
 type SortDir = "asc" | "desc";
 
@@ -244,26 +278,26 @@ export default function RecruitingClient(props: {
   const [hover, setHover] = React.useState<string | null>(null);
   const [visitWeekChoice, setVisitWeekChoice] = React.useState<Record<string, number>>({});
 
-  // NEW: Sorting
   const [sortKey, setSortKey] = React.useState<SortKey>("interest");
   const [sortDir, setSortDir] = React.useState<SortDir>("desc");
 
-  // NEW: Header finance + weekly points remaining (computed client-side)
   const [cash, setCash] = React.useState<number | null>(null);
   const [weeklyCap, setWeeklyCap] = React.useState<number>(100);
   const [weeklyUsed, setWeeklyUsed] = React.useState<number>(0);
+
+  // NEW: which contact types have been used this week per recruit
+  const [usedContacts, setUsedContacts] = React.useState<Record<string, Record<string, boolean>>>({});
 
   React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
   const boardCount = React.useMemo(() => rows.filter((r) => Boolean(r.on_board)).length, [rows]);
 
-  // Load team cash + weekly used points
+  // Load team cash + weekly used points + used contact types (so refresh persists)
   React.useEffect(() => {
     let cancelled = false;
 
-    async function loadHeader() {
+    async function loadHeaderAndContacts() {
       try {
-        // cash
         const { data: fin } = await supabase
           .from("team_finances")
           .select("cash_balance")
@@ -273,26 +307,40 @@ export default function RecruitingClient(props: {
 
         if (!cancelled) setCash(Number(fin?.cash_balance ?? 0));
 
-        // weekly used
         const { data: contacts } = await supabase
           .from("recruiting_contacts")
-          .select("points")
+          .select("recruit_id, contact_type, points")
           .eq("league_id", props.leagueId)
           .eq("team_id", props.teamId)
           .eq("season", props.currentSeason)
           .eq("week", props.currentWeek);
 
-        const used = Array.isArray(contacts) ? contacts.reduce((a: number, r: any) => a + Number(r?.points ?? 0), 0) : 0;
-        if (!cancelled) setWeeklyUsed(used);
+        const usedPts = Array.isArray(contacts)
+          ? contacts.reduce((a: number, r: any) => a + Number(r?.points ?? 0), 0)
+          : 0;
 
-        // cap (v1 fixed 100, but we keep it in state so future scaling is easy)
-        if (!cancelled) setWeeklyCap(100);
+        const usedMap: Record<string, Record<string, boolean>> = {};
+        if (Array.isArray(contacts)) {
+          for (const c of contacts) {
+            const rid = String(c?.recruit_id ?? "");
+            const ct = String(c?.contact_type ?? "");
+            if (!rid || !ct) continue;
+            if (!usedMap[rid]) usedMap[rid] = {};
+            usedMap[rid][ct] = true;
+          }
+        }
+
+        if (!cancelled) {
+          setWeeklyUsed(usedPts);
+          setWeeklyCap(100); // v1 fixed
+          setUsedContacts(usedMap);
+        }
       } catch {
-        // silent; header will still render
+        // silent
       }
     }
 
-    loadHeader();
+    loadHeaderAndContacts();
     return () => {
       cancelled = true;
     };
@@ -336,6 +384,16 @@ export default function RecruitingClient(props: {
     });
   }, [rows, query, view, sortKey, sortDir]);
 
+  async function refreshCash() {
+    const { data: fin } = await supabase
+      .from("team_finances")
+      .select("cash_balance")
+      .eq("league_id", props.leagueId)
+      .eq("team_id", props.teamId)
+      .maybeSingle();
+    setCash(Number(fin?.cash_balance ?? cash ?? 0));
+  }
+
   // =========================
   // OFFERS (PAID via RPC)
   // =========================
@@ -346,7 +404,6 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [rid]: true }));
 
-    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -374,16 +431,8 @@ export default function RecruitingClient(props: {
         )
       );
 
-      // refresh cash (cheap)
-      const { data: fin } = await supabase
-        .from("team_finances")
-        .select("cash_balance")
-        .eq("league_id", props.leagueId)
-        .eq("team_id", props.teamId)
-        .maybeSingle();
-      setCash(Number(fin?.cash_balance ?? cash ?? 0));
+      await refreshCash();
     } catch (e: any) {
-      // revert
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid
@@ -398,7 +447,7 @@ export default function RecruitingClient(props: {
   }
 
   // =========================
-  // BOARD (UPSERT to avoid unique constraint errors)
+  // BOARD (UPSERT safe)
   // =========================
   async function onToggleBoard(r: Recruit) {
     const rid = r._recruit_id;
@@ -418,10 +467,7 @@ export default function RecruitingClient(props: {
             recruit_id: rid,
             season: props.currentSeason,
           },
-          {
-            onConflict: "league_id,team_id,recruit_id,season",
-            ignoreDuplicates: true,
-          }
+          { onConflict: "league_id,team_id,recruit_id,season", ignoreDuplicates: true }
         );
         if (upErr) throw new Error(upErr.message);
       } else {
@@ -448,9 +494,6 @@ export default function RecruitingClient(props: {
     return Math.min(16, Math.max(1, props.currentWeek + 1));
   }
 
-  // =========================
-  // VISITS (PAID via RPC wrapper)
-  // =========================
   async function onScheduleVisit(r: Recruit) {
     const rid = r._recruit_id;
     const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
@@ -458,7 +501,6 @@ export default function RecruitingClient(props: {
     setError(null);
     setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
 
-    // optimistic
     setRows((prev) =>
       prev.map((x) =>
         x._recruit_id === rid
@@ -479,13 +521,7 @@ export default function RecruitingClient(props: {
 
       if (rpcErr) throw new Error(rpcErr.message);
 
-      const { data: fin } = await supabase
-        .from("team_finances")
-        .select("cash_balance")
-        .eq("league_id", props.leagueId)
-        .eq("team_id", props.teamId)
-        .maybeSingle();
-      setCash(Number(fin?.cash_balance ?? cash ?? 0));
+      await refreshCash();
     } catch (e: any) {
       setRows((prev) =>
         prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
@@ -505,7 +541,9 @@ export default function RecruitingClient(props: {
     const prevWeek = r.my_visit_week ?? null;
     const prevBonus = r.my_visit_bonus ?? null;
 
-    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x)));
+    setRows((prev) =>
+      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+    );
 
     try {
       const { error: rpcErr } = await supabase.rpc("remove_recruit_visit_v1", {
@@ -525,12 +563,16 @@ export default function RecruitingClient(props: {
     }
   }
 
-  // =========================
-  // CONTACT ACTIONS (CFB26-style)
-  // =========================
-  async function onContact(r: Recruit, contactType: "call" | "text" | "dm" | "social" | "coach_visit" | "home_visit") {
+  function isUsed(rid: string, ct: ContactType) {
+    return Boolean(usedContacts?.[rid]?.[ct]);
+  }
+
+  async function onContact(r: Recruit, contactType: ContactType) {
     const rid = r._recruit_id;
     const key = `contact:${contactType}:${rid}`;
+
+    // hard client guard (prevents duplicate constraint error)
+    if (isUsed(rid, contactType)) return;
 
     setError(null);
     setBusy((m) => ({ ...m, [key]: true }));
@@ -545,23 +587,40 @@ export default function RecruitingClient(props: {
         p_contact_type: contactType,
       });
 
-      if (rpcErr) throw new Error(rpcErr.message);
+      if (rpcErr) {
+        // If the DB says duplicate, treat it as "already used" and lock the button anyway
+        const msg = String(rpcErr.message ?? "");
+        if (msg.toLowerCase().includes("recruiting_contacts_unique_weekly")) {
+          setUsedContacts((m) => ({
+            ...m,
+            [rid]: { ...(m[rid] ?? {}), [contactType]: true },
+          }));
+          return;
+        }
+        throw new Error(rpcErr.message);
+      }
 
       const delta = Number((data as any)?.interest_delta ?? 0);
-      const remaining = Number((data as any)?.weekly_remaining ?? weeklyRemaining);
       const used = Number((data as any)?.weekly_used ?? weeklyUsed);
+      const cap = Number((data as any)?.weekly_cap ?? weeklyCap);
       const cost = Number((data as any)?.cash_cost ?? 0);
 
-      // optimistic: bump my_interest
+      // mark used immediately so the UI locks + changes color
+      setUsedContacts((m) => ({
+        ...m,
+        [rid]: { ...(m[rid] ?? {}), [contactType]: true },
+      }));
+
+      // bump interest locally
       setRows((prev) =>
         prev.map((x) =>
           x._recruit_id === rid ? { ...x, my_interest: clamp(Number(x.my_interest ?? 0) + delta) } : x
         )
       );
 
-      // update header
+      // header
       setWeeklyUsed(used);
-      setWeeklyCap(Number((data as any)?.weekly_cap ?? weeklyCap));
+      setWeeklyCap(cap);
       setCash((c) => Number((c ?? 0) - cost));
     } catch (e: any) {
       setError(e?.message ?? "Contact failed.");
@@ -584,13 +643,13 @@ export default function RecruitingClient(props: {
         <div style={{ flex: 1 }} />
 
         <HeaderChip label={`Cash: $${fmtMoney(cash)}`} />
-        <HeaderChip label={`Contact Pts: ${weeklyRemaining}/${weeklyCap}`} />
+        <HeaderChip label={`Contact Pts: ${Math.max(0, weeklyCap - weeklyUsed)}/${weeklyCap}`} />
         <HeaderChip label={`Offer: $25k`} />
         <HeaderChip label={`Visit: $50k`} />
         <HeaderChip label={`Call/Text/DM: $5–10k`} />
       </div>
 
-      {/* FILTER / SEARCH / SORT */}
+      {/* FILTERS */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         <PillButton active={view === "all"} onClick={() => setView("all")}>
           All Recruits
@@ -634,7 +693,6 @@ export default function RecruitingClient(props: {
       ) : null}
 
       <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 16, overflow: "hidden" }}>
-        {/* TABLE HEADER (sortable) */}
         <div
           style={{
             display: "grid",
@@ -671,7 +729,16 @@ export default function RecruitingClient(props: {
 
           const scheduledWeek = r.my_visit_week ? Number(r.my_visit_week) : null;
           const scheduledBonus = r.my_visit_bonus != null ? Number(r.my_visit_bonus) : null;
-          const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
+          const chosenWeek = visitWeekChoice[rid] ?? Math.min(16, Math.max(1, props.currentWeek + 1));
+
+          const pointsLeft = Math.max(0, weeklyCap - weeklyUsed);
+
+          const usedText = isUsed(rid, "text");
+          const usedDm = isUsed(rid, "dm");
+          const usedSocial = isUsed(rid, "social");
+          const usedCall = isUsed(rid, "call");
+          const usedCoach = isUsed(rid, "coach_visit");
+          const usedHome = isUsed(rid, "home_visit");
 
           return (
             <div key={rid} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -749,51 +816,56 @@ export default function RecruitingClient(props: {
                         padding: 10,
                       }}
                     >
-                      <ActionButton
-                        variant="neutral"
-                        disabled={Boolean(busy[`contact:text:${rid}`]) || weeklyRemaining <= 0}
+                      <ContactButton
+                        used={usedText}
+                        disabled={usedText || Boolean(busy[`contact:text:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "text")}
                       >
-                        {busy[`contact:text:${rid}`] ? "…" : "Text"}
-                      </ActionButton>
-                      <ActionButton
-                        variant="neutral"
-                        disabled={Boolean(busy[`contact:dm:${rid}`]) || weeklyRemaining <= 0}
+                        {busy[`contact:text:${rid}`] ? "…" : usedText ? "Text ✓" : "Text"}
+                      </ContactButton>
+
+                      <ContactButton
+                        used={usedDm}
+                        disabled={usedDm || Boolean(busy[`contact:dm:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "dm")}
                       >
-                        {busy[`contact:dm:${rid}`] ? "…" : "DM"}
-                      </ActionButton>
-                      <ActionButton
-                        variant="neutral"
-                        disabled={Boolean(busy[`contact:social:${rid}`]) || weeklyRemaining <= 0}
+                        {busy[`contact:dm:${rid}`] ? "…" : usedDm ? "DM ✓" : "DM"}
+                      </ContactButton>
+
+                      <ContactButton
+                        used={usedSocial}
+                        disabled={usedSocial || Boolean(busy[`contact:social:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "social")}
                       >
-                        {busy[`contact:social:${rid}`] ? "…" : "Social"}
-                      </ActionButton>
-                      <ActionButton
-                        variant="secondary"
-                        disabled={Boolean(busy[`contact:call:${rid}`]) || weeklyRemaining <= 0}
+                        {busy[`contact:social:${rid}`] ? "…" : usedSocial ? "Social ✓" : "Social"}
+                      </ContactButton>
+
+                      <ContactButton
+                        used={usedCall}
+                        disabled={usedCall || Boolean(busy[`contact:call:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "call")}
                       >
-                        {busy[`contact:call:${rid}`] ? "…" : "Call"}
-                      </ActionButton>
-                      <ActionButton
-                        variant="secondary"
-                        disabled={Boolean(busy[`contact:coach_visit:${rid}`]) || weeklyRemaining <= 0}
+                        {busy[`contact:call:${rid}`] ? "…" : usedCall ? "Call ✓" : "Call"}
+                      </ContactButton>
+
+                      <ContactButton
+                        used={usedCoach}
+                        disabled={usedCoach || Boolean(busy[`contact:coach_visit:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "coach_visit")}
                       >
-                        {busy[`contact:coach_visit:${rid}`] ? "…" : "Coach Visit"}
-                      </ActionButton>
-                      <ActionButton
-                        variant="primary"
-                        disabled={Boolean(busy[`contact:home_visit:${rid}`]) || weeklyRemaining <= 0}
+                        {busy[`contact:coach_visit:${rid}`] ? "…" : usedCoach ? "Coach Visit ✓" : "Coach Visit"}
+                      </ContactButton>
+
+                      <ContactButton
+                        used={usedHome}
+                        disabled={usedHome || Boolean(busy[`contact:home_visit:${rid}`]) || pointsLeft <= 0}
                         onClick={() => onContact(r, "home_visit")}
                       >
-                        {busy[`contact:home_visit:${rid}`] ? "…" : "Home Visit"}
-                      </ActionButton>
+                        {busy[`contact:home_visit:${rid}`] ? "…" : usedHome ? "Home Visit ✓" : "Home Visit"}
+                      </ContactButton>
 
                       <div style={{ flex: 1 }} />
-                      <StatusPill label={`Pts left: ${weeklyRemaining}`} tone={weeklyRemaining > 0 ? "ok" : "warn"} />
+                      <StatusPill label={`Pts left: ${pointsLeft}`} tone={pointsLeft > 0 ? "ok" : "warn"} />
                     </div>
                   </div>
 
@@ -858,27 +930,15 @@ export default function RecruitingClient(props: {
                         </select>
 
                         {!scheduledWeek ? (
-                          <ActionButton
-                            variant="secondary"
-                            disabled={Boolean(busy[`visit:${rid}`])}
-                            onClick={() => onScheduleVisit(r)}
-                          >
+                          <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
                             {busy[`visit:${rid}`] ? "…" : "Schedule Visit"}
                           </ActionButton>
                         ) : (
                           <>
-                            <ActionButton
-                              variant="secondary"
-                              disabled={Boolean(busy[`visit:${rid}`])}
-                              onClick={() => onScheduleVisit(r)}
-                            >
+                            <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
                               {busy[`visit:${rid}`] ? "…" : "Reschedule"}
                             </ActionButton>
-                            <ActionButton
-                              variant="danger"
-                              disabled={Boolean(busy[`visit:${rid}`])}
-                              onClick={() => onRemoveVisit(r)}
-                            >
+                            <ActionButton variant="danger" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onRemoveVisit(r)}>
                               {busy[`visit:${rid}`] ? "…" : "Remove"}
                             </ActionButton>
                           </>
