@@ -1,115 +1,37 @@
-// app/league/[leagueId]/recruiting/actions.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { supabaseServer } from "../../../../lib/supabaseServer";
+import { createClient } from "@/lib/supabase/server";
 
-export type ActionResult =
-  | { ok: true; message: string; data?: any }
-  | { ok: false; message: string; data?: any };
-
-type OfferArgs = {
-  leagueId: string;
-  teamId: string;
-  recruitId: string;
-};
-
-async function getAuthedLeague(leagueId: string) {
-  const supabase = supabaseServer();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) return { ok: false as const, message: userErr.message };
-  if (!user) return { ok: false as const, message: "Not authenticated" };
-
-  const { data: league, error: leagueErr } = await supabase
-    .from("leagues")
-    .select("id, commissioner_id, current_season, current_week")
-    .eq("id", leagueId)
-    .single();
-
-  if (leagueErr) return { ok: false as const, message: leagueErr.message };
-  if (!league) return { ok: false as const, message: "League not found." };
-
-  return { ok: true as const, supabase, user, league };
-}
-
-/** ✅ exported — recruiting-client imports this */
-export async function makeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase } = ctx;
-
-  // ✅ RLS-safe: all writes happen inside the SECURITY DEFINER SQL function
-  const { data, error } = await supabase.rpc("make_recruiting_offer_v1", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-  });
-
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer made.", data };
-}
-
-/** ✅ exported — recruiting-client imports this */
-export async function removeOfferAction(args: OfferArgs): Promise<ActionResult> {
-  const { leagueId, teamId, recruitId } = args ?? ({} as any);
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-  if (!teamId) return { ok: false, message: "Missing teamId." };
-  if (!recruitId) return { ok: false, message: "Missing recruitId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase } = ctx;
-
-  // If you haven't created remove_recruiting_offer_v1 yet, keep this as a direct delete
-  // BUT: direct deletes can also be blocked by RLS.
-  // Recommended: create remove_recruiting_offer_v1 (I can drop-in that SQL next).
-  const { error } = await supabase.rpc("remove_recruiting_offer_v1", {
-    p_league_id: leagueId,
-    p_team_id: teamId,
-    p_recruit_id: recruitId,
-  });
-
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath(`/league/${leagueId}/recruiting`);
-  return { ok: true, message: "Offer removed." };
-}
-
-/** ✅ exported — AdvanceWeekButton should call this */
-export async function advanceRecruitingWeek(leagueId: string): Promise<ActionResult> {
-  if (!leagueId) return { ok: false, message: "Missing leagueId." };
-
-  const ctx = await getAuthedLeague(leagueId);
-  if (!ctx.ok) return { ok: false, message: ctx.message };
-
-  const { supabase, user, league } = ctx;
-
-  if (league.commissioner_id !== user.id) {
-    return { ok: false, message: "Only the commissioner can advance the week." };
+/**
+ * Advances recruiting by exactly one week for a league.
+ * This calls the Postgres RPC:
+ *   public.process_recruiting_week_v1(p_league_id uuid) -> jsonb
+ *
+ * The RPC is commissioner/admin guarded in SQL.
+ */
+export async function advanceRecruitingWeekAction(leagueId: string) {
+  if (!leagueId) {
+    throw new Error("Missing leagueId");
   }
 
+  const supabase = createClient();
+
+  // Call the server-authoritative weekly recruiting processor
   const { data, error } = await supabase.rpc("process_recruiting_week_v1", {
     p_league_id: leagueId,
   });
 
-  if (error) return { ok: false, message: error.message };
+  if (error) {
+    // surface the real Postgres error message
+    throw new Error(error.message);
+  }
 
+  // Make sure the recruiting page re-renders with:
+  // - updated current_week
+  // - updated interests
+  // - applied visits / commitments
   revalidatePath(`/league/${leagueId}/recruiting`);
-  revalidatePath(`/league/${leagueId}`);
 
-  return { ok: true, message: "Week advanced successfully.", data };
+  return data;
 }
