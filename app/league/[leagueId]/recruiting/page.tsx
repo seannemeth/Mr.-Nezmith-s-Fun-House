@@ -26,14 +26,13 @@ function supabaseServer() {
         try {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
         } catch {
-          // RSC cookie write limitations; ignore
+          // ignore (RSC cookie write limitations)
         }
       },
     },
   });
 }
 
-// robust column existence check (no info_schema dependency via PostgREST weirdness)
 async function hasColumn(supabase: ReturnType<typeof supabaseServer>, table: string, col: string) {
   const { data, error } = await supabase
     .from("information_schema.columns")
@@ -137,7 +136,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Interest rows (include visit_applied if column exists)
+  // Interest rows (include visit_applied if present)
   type InterestRow = { recruit_id: string; team_id: string; interest: number; visit_applied: boolean };
   let interests: InterestRow[] = [];
 
@@ -163,7 +162,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Visits (my team only)
+  // Visits (my team only) — detect bonus column, but yours is BONUS
   type MyVisit = { recruit_id: string; week: number; bonus: number };
   const myVisitByRecruit: Record<string, MyVisit> = {};
 
@@ -184,7 +183,6 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
         const week = Number(v.week ?? 0);
         const bonus = Number(v[bonusCol] ?? 0);
 
-        // keep earliest week if multiple rows exist
         const cur = myVisitByRecruit[rid];
         if (!cur || (week > 0 && week < cur.week)) {
           myVisitByRecruit[rid] = { recruit_id: rid, week, bonus };
@@ -193,10 +191,8 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Team name map (for Top 8 display)
   const teamNameById = await loadTeamNameMap(supabase, leagueId);
 
-  // Group interests by recruit
   const byRecruit: Record<string, Array<{ team_id: string; interest: number; visit_applied: boolean }>> = {};
   for (const row of interests) {
     (byRecruit[row.recruit_id] ??= []).push({
@@ -206,7 +202,6 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     });
   }
 
-  // Hydrate recruits with: my_interest, top8, on_board, my visit (week/bonus), my_visit_applied
   const hydrated = recruits.map((r) => {
     const rid = String(r.id ?? r.recruit_id ?? "");
     const list = (byRecruit[rid] ?? []).slice().sort((a, b) => b.interest - a.interest);
