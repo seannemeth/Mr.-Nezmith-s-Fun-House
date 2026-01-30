@@ -26,39 +26,15 @@ function supabaseServer() {
         try {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
         } catch {
-          // ignore (RSC cookie limitations)
+          // RSC cookie write limitations; ignore
         }
       },
     },
   });
 }
 
-async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leagueId: string) {
-  const attempts: Array<{ table: string; select: string; leagueCol: string }> = [
-    { table: "teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
-    { table: "league_teams", select: "id,name,league_id,school_name,display_name", leagueCol: "league_id" },
-  ];
-
-  for (const a of attempts) {
-    const { data, error } = await supabase.from(a.table).select(a.select).eq(a.leagueCol, leagueId);
-    if (!error && Array.isArray(data)) {
-      const map: Record<string, string> = {};
-      for (const t of data as any[]) {
-        const id = String(t.id);
-        const name = String(t.name ?? t.school_name ?? t.display_name ?? "Unknown");
-        map[id] = name;
-      }
-      return map;
-    }
-  }
-  return {};
-}
-
-async function hasColumn(
-  supabase: ReturnType<typeof supabaseServer>,
-  table: string,
-  col: string
-): Promise<boolean> {
+// robust column existence check (no info_schema dependency via PostgREST weirdness)
+async function hasColumn(supabase: ReturnType<typeof supabaseServer>, table: string, col: string) {
   const { data, error } = await supabase
     .from("information_schema.columns")
     .select("column_name")
@@ -69,6 +45,28 @@ async function hasColumn(
 
   if (error) return false;
   return Array.isArray(data) && data.length > 0;
+}
+
+async function loadTeamNameMap(supabase: ReturnType<typeof supabaseServer>, leagueId: string) {
+  const attempts: Array<{ table: string; select: string }> = [
+    { table: "teams", select: "id,name,league_id,school_name,display_name,short_name" },
+    { table: "league_teams", select: "id,name,league_id,school_name,display_name,short_name" },
+  ];
+
+  for (const a of attempts) {
+    const { data, error } = await supabase.from(a.table).select(a.select).eq("league_id", leagueId);
+    if (!error && Array.isArray(data)) {
+      const map: Record<string, string> = {};
+      for (const t of data as any[]) {
+        const id = String(t.id);
+        const name = String(t.name ?? t.school_name ?? t.display_name ?? t.short_name ?? "Unknown");
+        map[id] = name;
+      }
+      return map;
+    }
+  }
+
+  return {};
 }
 
 export default async function RecruitingPage({ params }: { params: { leagueId: string } }) {
@@ -103,11 +101,10 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     .maybeSingle();
 
   if (leagueErr || !league) throw new Error("League not found.");
-
   const currentSeason = Number(league.current_season ?? 1);
   const currentWeek = Number(league.current_week ?? 1);
 
-  // Recruits (paged overload)
+  // Recruits list RPC
   const PAGE_LIMIT = 250;
   const { data: recruitRows, error: recruitErr } = await supabase.rpc("get_recruit_list_v1", {
     p_league_id: leagueId,
@@ -140,12 +137,19 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
-  // Interest rows
-  let interests: Array<{ recruit_id: string; team_id: string; interest: number }> = [];
+  // Interest rows (include visit_applied if column exists)
+  type InterestRow = { recruit_id: string; team_id: string; interest: number; visit_applied: boolean };
+  let interests: InterestRow[] = [];
+
   if (recruitIds.length > 0) {
+    const hasVisitApplied = await hasColumn(supabase, "recruit_interests", "visit_applied");
+    const interestSelect = hasVisitApplied
+      ? "recruit_id,team_id,interest,visit_applied"
+      : "recruit_id,team_id,interest";
+
     const { data: interestRows, error: intErr } = await supabase
       .from("recruit_interests")
-      .select("recruit_id,team_id,interest")
+      .select(interestSelect)
       .eq("league_id", leagueId)
       .in("recruit_id", recruitIds);
 
@@ -154,6 +158,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
         recruit_id: String(x.recruit_id),
         team_id: String(x.team_id),
         interest: Number(x.interest ?? 0),
+        visit_applied: hasVisitApplied ? Boolean(x.visit_applied) : false,
       }));
     }
   }
@@ -162,12 +167,10 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
   type MyVisit = { recruit_id: string; week: number; bonus: number };
   const myVisitByRecruit: Record<string, MyVisit> = {};
 
-  const hasVisitsTable = true; // if you want: (await supabase.from(...)) — keep simple
-  if (hasVisitsTable && recruitIds.length > 0) {
+  if (recruitIds.length > 0) {
     const hasVisitBonus = await hasColumn(supabase, "recruit_visits", "visit_bonus");
     const bonusCol = hasVisitBonus ? "visit_bonus" : "bonus";
 
-    // We don't need recruitIds filter (could be large IN), but it's fine for 250
     const { data: visitRows, error: vErr } = await supabase
       .from("recruit_visits")
       .select(`recruit_id,week,${bonusCol}`)
@@ -181,7 +184,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
         const week = Number(v.week ?? 0);
         const bonus = Number(v[bonusCol] ?? 0);
 
-        // If multiple weeks exist, keep the earliest upcoming visit
+        // keep earliest week if multiple rows exist
         const cur = myVisitByRecruit[rid];
         if (!cur || (week > 0 && week < cur.week)) {
           myVisitByRecruit[rid] = { recruit_id: rid, week, bonus };
@@ -190,31 +193,45 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
     }
   }
 
+  // Team name map (for Top 8 display)
   const teamNameById = await loadTeamNameMap(supabase, leagueId);
 
-  const byRecruit: Record<string, Array<{ team_id: string; interest: number }>> = {};
-  for (const row of interests) (byRecruit[row.recruit_id] ??= []).push({ team_id: row.team_id, interest: row.interest });
+  // Group interests by recruit
+  const byRecruit: Record<string, Array<{ team_id: string; interest: number; visit_applied: boolean }>> = {};
+  for (const row of interests) {
+    (byRecruit[row.recruit_id] ??= []).push({
+      team_id: row.team_id,
+      interest: row.interest,
+      visit_applied: row.visit_applied,
+    });
+  }
 
+  // Hydrate recruits with: my_interest, top8, on_board, my visit (week/bonus), my_visit_applied
   const hydrated = recruits.map((r) => {
     const rid = String(r.id ?? r.recruit_id ?? "");
     const list = (byRecruit[rid] ?? []).slice().sort((a, b) => b.interest - a.interest);
+
     const top8 = list.slice(0, 8).map((x) => ({
       team_id: x.team_id,
       team_name: teamNameById[x.team_id] ?? "Unknown",
       interest: x.interest,
     }));
-    const mine = list.find((x) => x.team_id === teamId)?.interest ?? 0;
+
+    const myRow = list.find((x) => x.team_id === teamId);
+    const myInterest = myRow?.interest ?? 0;
+    const myVisitApplied = myRow?.visit_applied ?? false;
 
     const mv = myVisitByRecruit[rid];
 
     return {
       ...r,
       _recruit_id: rid,
-      my_interest: mine,
+      my_interest: myInterest,
+      my_visit_applied: myVisitApplied,
+
       top8,
       on_board: boardIds.has(rid),
 
-      // ✅ visits
       my_visit_week: mv?.week ?? null,
       my_visit_bonus: mv?.bonus ?? null,
     };
@@ -234,7 +251,7 @@ export default async function RecruitingPage({ params }: { params: { leagueId: s
         teamId={teamId}
         recruits={hydrated}
         currentSeason={currentSeason}
-        currentWeek={currentWeek} // ✅ add
+        currentWeek={currentWeek}
       />
     </div>
   );
