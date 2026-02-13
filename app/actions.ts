@@ -2,7 +2,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseServer } from "../lib/supabaseServer";
+import { supabaseAction } from "../lib/supabaseAction";
 
 function enc(s: string) {
   return encodeURIComponent(s ?? "");
@@ -17,7 +17,7 @@ function rethrowIfNextRedirect(e: any) {
 
 function safeSupabase(orRedirectTo: string) {
   try {
-    return supabaseServer();
+    return supabaseAction();
   } catch (e: any) {
     rethrowIfNextRedirect(e);
     redirect(`${orRedirectTo}?err=${enc(e?.message ?? "Server misconfigured.")}`);
@@ -46,18 +46,11 @@ export async function signInAction(formData: FormData) {
   try {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-    if (error) {
-      redirect(`/login?err=${enc(error.message)}`);
-    }
-
-    if (!data?.session) {
-      // Defensive: if Supabase returned no session and no error, treat it as failure
-      redirect(`/login?err=${enc("Sign-in failed: no session returned.")}`);
-    }
+    if (error) redirect(`/login?err=${enc(error.message)}`);
+    if (!data?.session) redirect(`/login?err=${enc("Sign-in failed: no session returned.")}`);
 
     redirect(`/`);
   } catch (e: any) {
-    // This catches the real offender: TypeError: fetch failed (network, bad URL, blocked egress, etc.)
     rethrowIfNextRedirect(e);
     redirect(`/login?err=${enc(`Sign-in failed: ${e?.message ?? "fetch failed"}`)}`);
   }
