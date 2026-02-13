@@ -1,12 +1,16 @@
-// lib/supabaseAction.ts
+// lib/supabaseServer.ts
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * Server Action / Route Handler safe Supabase client:
- * - can READ + WRITE cookies
+ * Server Component safe Supabase client:
+ * - can READ cookies
+ * - must NOT write cookies (Next will throw if you try)
+ *
+ * IMPORTANT: Many pages import { supabaseServer } from this file.
+ * Do not rename this export.
  */
-export function supabaseAction() {
+export function supabaseServer() {
   const cookieStore = cookies();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -21,12 +25,9 @@ export function supabaseAction() {
       get(name: string) {
         return cookieStore.get(name)?.value;
       },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options });
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-      },
+      // NO-OP in Server Components (writes are not allowed here)
+      set() {},
+      remove() {},
     },
   });
 }
