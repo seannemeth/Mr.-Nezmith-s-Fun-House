@@ -1,6 +1,6 @@
 // app/api/_debug/supabase-selftest/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { supabaseServer } from "../../../../lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,6 @@ export async function GET() {
     const hasUrl = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
     const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
-    // If these are missing, your Server Components will crash in prod.
     if (!hasUrl || !hasAnon) {
       return NextResponse.json(
         {
@@ -18,7 +17,15 @@ export async function GET() {
           step: "env",
           hasSupabaseUrl: hasUrl,
           hasSupabaseAnonKey: hasAnon,
-          supabaseUrlHost: hasUrl ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).host : null,
+          supabaseUrlHost: hasUrl
+            ? (() => {
+                try {
+                  return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).host;
+                } catch {
+                  return "invalid-url";
+                }
+              })()
+            : null,
         },
         { status: 500 }
       );
@@ -26,12 +33,10 @@ export async function GET() {
 
     const sb = supabaseServer();
 
-    // 1) Basic auth read (should NOT require cookie writes)
     const s1 = await sb.auth.getSession();
     const s2 = await sb.auth.getUser();
 
-    // 2) Tiny DB ping (doesn't require schema knowledge)
-    // If this fails, your Supabase URL/key/env/project is wrong.
+    // light DB ping (assumes leagues exists in your schema — it does in your repo)
     const ping = await sb.from("leagues").select("id").limit(1);
 
     return NextResponse.json({
