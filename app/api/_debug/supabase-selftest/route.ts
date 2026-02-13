@@ -36,7 +36,6 @@ export async function GET() {
     const s1 = await sb.auth.getSession();
     const s2 = await sb.auth.getUser();
 
-    // light DB ping (assumes leagues exists in your schema — it does in your repo)
     const ping = await sb.from("leagues").select("id").limit(1);
 
     return NextResponse.json({
