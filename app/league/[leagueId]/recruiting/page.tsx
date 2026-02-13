@@ -12,6 +12,14 @@ type MembershipRow = {
   team_id?: string | null;
 };
 
+function pickSeasonWeek(league: any): { season: number; week: number } {
+  const season =
+    Number(league?.current_season ?? league?.season ?? league?.active_season ?? 1) || 1;
+  const week =
+    Number(league?.current_week ?? league?.week ?? league?.active_week ?? 1) || 1;
+  return { season, week };
+}
+
 async function getMembership(
   supabase: any,
   leagueId: string,
@@ -48,7 +56,16 @@ export default async function RecruitingPage({ params }: PageProps) {
 
   const userId = session.user.id;
 
-  // Membership / team assignment (authoritative)
+  // Load league for season/week
+  const { data: league } = await supabase
+    .from("leagues")
+    .select("*")
+    .eq("id", leagueId)
+    .maybeSingle();
+
+  const { season: currentSeason, week: currentWeek } = pickSeasonWeek(league);
+
+  // Membership / team assignment
   const membership = await getMembership(supabase, leagueId, userId);
 
   if (!membership) {
@@ -81,13 +98,53 @@ export default async function RecruitingPage({ params }: PageProps) {
     );
   }
 
-  // IMPORTANT:
-  // We do NOT load recruits/season/week here anymore.
-  // The client component loads:
-  // - team_finances for cash/season/week
-  // - recruits list
-  // - recruiting_contacts for used buttons
-  //
-  // This also prevents any accidental UUID display server-side.
-  return <RecruitingClient leagueId={leagueId} teamId={teamId} />;
+  // Load recruits (league scoped)
+  const { data: recruitsRaw, error: recruitsErr } = await supabase
+    .from("recruits")
+    .select("*")
+    .eq("league_id", leagueId)
+    .limit(800);
+
+  if (recruitsErr) {
+    return (
+      <div className="p-6">
+        <h1 className="text-xl font-semibold">Recruiting</h1>
+        <p className="mt-3 text-sm opacity-80">
+          Recruiting is temporarily unavailable due to a recruits query error.
+        </p>
+        <pre className="mt-4 rounded-lg bg-black/5 p-3 text-xs overflow-auto">
+          {recruitsErr.message}
+        </pre>
+      </div>
+    );
+  }
+
+  // Normalize recruits into what the client expects.
+  // NOTE: We keep _recruit_id internally for actions, but the UI no longer displays it.
+  const recruits =
+    (recruitsRaw ?? []).map((r: any) => ({
+      ...r,
+      _recruit_id: String(r.id ?? r.recruit_id ?? r._recruit_id),
+      my_interest: r.my_interest ?? 0,
+      top8: r.top8 ?? [],
+      on_board: r.on_board ?? false,
+      my_visit_week: r.my_visit_week ?? null,
+      my_visit_bonus: r.my_visit_bonus ?? null,
+      my_visit_applied: r.my_visit_applied ?? false,
+      height_in: r.height_in ?? null,
+      weight_lb: r.weight_lb ?? null,
+      archetype: r.archetype ?? null,
+    })) ?? [];
+
+  return (
+    <RecruitingClient
+      supabaseUrl={process.env.NEXT_PUBLIC_SUPABASE_URL!}
+      supabaseAnonKey={process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}
+      leagueId={leagueId}
+      teamId={teamId}
+      recruits={recruits}
+      currentSeason={currentSeason}
+      currentWeek={currentWeek}
+    />
+  );
 }
