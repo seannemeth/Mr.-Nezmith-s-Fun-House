@@ -178,3 +178,4 @@ export async function updateTeamAction(formData: FormData) {
   if (error) redirect(leaguePath(leagueId, `/teams/${teamId}?err=${enc(error.message)}`));
   redirect(leaguePath(leagueId, `/teams/${teamId}?msg=${enc("Team updated.")}`));
 }
+
