@@ -1,3 +1,4 @@
+// app/actions.ts
 "use server";
 
 import { redirect } from "next/navigation";
@@ -12,6 +13,18 @@ function leaguePath(leagueId: string, path: string) {
   return `/league/${leagueId}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** Create Supabase server client, but never throw to the browser (redirect with an error instead). */
+function safeSupabase(orRedirectTo: string) {
+  try {
+    return supabaseServer();
+  } catch (e: any) {
+    const msg =
+      e?.message ??
+      "Server misconfigured (missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).";
+    redirect(`${orRedirectTo}?err=${enc(msg)}`);
+  }
+}
+
 /* =====================================================================================
  * AUTH ACTIONS
  * ===================================================================================== */
@@ -24,11 +37,17 @@ export async function signInAction(formData: FormData) {
     redirect(`/login?err=${enc("Email and password are required.")}`);
   }
 
-  const supabase = supabaseServer();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const supabase = safeSupabase("/login");
 
-  if (error) redirect(`/login?err=${enc(error.message)}`);
-  redirect(`/`);
+  try {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) redirect(`/login?err=${enc(error.message)}`);
+    redirect(`/`);
+  } catch (e: any) {
+    // This catches network-layer failures that surface as "fetch failed"
+    const msg = e?.message || "fetch failed";
+    redirect(`/login?err=${enc(`Sign-in failed: ${msg}`)}`);
+  }
 }
 
 export async function signUpAction(formData: FormData) {
@@ -39,19 +58,30 @@ export async function signUpAction(formData: FormData) {
     redirect(`/login?err=${enc("Email and password are required.")}`);
   }
 
-  const supabase = supabaseServer();
-  const { error } = await supabase.auth.signUp({ email, password });
+  const supabase = safeSupabase("/login");
 
-  if (error) redirect(`/login?err=${enc(error.message)}`);
+  try {
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) redirect(`/login?err=${enc(error.message)}`);
 
-  // Depending on your Supabase auth settings, the user may need email confirmation.
-  redirect(`/login?msg=${enc("Account created. If required, confirm your email, then sign in.")}`);
+    // Depending on your Supabase auth settings, the user may need email confirmation.
+    redirect(`/login?ok=${enc("Account created. If required, confirm your email, then sign in.")}`);
+  } catch (e: any) {
+    const msg = e?.message || "fetch failed";
+    redirect(`/login?err=${enc(`Sign-up failed: ${msg}`)}`);
+  }
 }
 
 export async function signOutAction() {
-  const supabase = supabaseServer();
-  await supabase.auth.signOut();
-  redirect(`/login?msg=${enc("Signed out.")}`);
+  const supabase = safeSupabase("/login");
+
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // ignore
+  }
+
+  redirect(`/login?ok=${enc("Signed out.")}`);
 }
 
 /* =====================================================================================
@@ -61,13 +91,12 @@ export async function signOutAction() {
 export async function joinLeagueAction(formData: FormData) {
   const leagueCode = String(formData.get("code") || "").trim();
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/league/join");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
   if (!leagueCode) redirect(`/league/join?err=${enc("League code is required.")}`);
 
-  // Assumes you have a leagues.code column; if not, update to your join mechanism.
   const { data: league, error: leagueErr } = await supabase
     .from("leagues")
     .select("id")
@@ -76,7 +105,6 @@ export async function joinLeagueAction(formData: FormData) {
 
   if (leagueErr || !league) redirect(`/league/join?err=${enc("League not found.")}`);
 
-  // Create membership if it doesn't exist; assumes memberships has league_id + user_id
   const { error: insertErr } = await supabase
     .from("memberships")
     .upsert(
@@ -93,12 +121,10 @@ export async function deleteLeagueAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // If you have an RPC for secure deletion, prefer that. Otherwise delete directly.
-  // This assumes RLS prevents non-owners from deleting.
   const { error } = await supabase.from("leagues").delete().eq("id", leagueId);
 
   if (error) redirect(`/?err=${enc(error.message)}`);
@@ -113,12 +139,10 @@ export async function advanceWeekAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   if (!leagueId) redirect(`/?err=${enc("Missing league id.")}`);
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // Prefer your existing RPC if you already had one.
-  // If your project already uses a different name, match it here.
   const { error } = await supabase.rpc("advance_week", { p_league_id: leagueId });
 
   if (error) redirect(leaguePath(leagueId, `/?err=${enc(error.message)}`));
@@ -148,7 +172,7 @@ export async function updateTeamAction(formData: FormData) {
   if (name) patch.name = name;
   if (prestige !== undefined) patch.prestige = prestige;
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
@@ -162,9 +186,6 @@ export async function updateTeamAction(formData: FormData) {
  * RECRUITING ACTIONS
  * ===================================================================================== */
 
-// Recruiting v2: the "Top-8 board" is now computed from active offers.
-// We removed manual board slot actions.
-
 export async function offerScholarshipAction(formData: FormData) {
   const leagueId = String(formData.get("leagueId") || "").trim();
   const teamId = String(formData.get("teamId") || "").trim();
@@ -174,15 +195,14 @@ export async function offerScholarshipAction(formData: FormData) {
   if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
   if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // Recruiting v2: season is derived from leagues.current_season inside the RPC.
   const { error } = await supabase.rpc("add_recruiting_offer", {
     p_league_id: leagueId,
     p_team_id: teamId,
-    p_recruit_id: recruitId
+    p_recruit_id: recruitId,
   });
 
   if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
@@ -198,15 +218,14 @@ export async function withdrawScholarshipAction(formData: FormData) {
   if (!teamId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing team.")}`));
   if (!recruitId) redirect(leaguePath(leagueId, `/recruiting?err=${enc("Missing recruit.")}`));
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // Recruiting v2: deactivate the offer for current season
   const { error } = await supabase.rpc("withdraw_recruiting_offer", {
     p_league_id: leagueId,
     p_team_id: teamId,
-    p_recruit_id: recruitId
+    p_recruit_id: recruitId,
   });
 
   if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
@@ -229,17 +248,16 @@ export async function scheduleRecruitVisitAction(formData: FormData) {
     redirect(leaguePath(leagueId, `/recruiting?err=${enc("Invalid visit week.")}`));
   }
 
-  const supabase = supabaseServer();
+  const supabase = safeSupabase("/");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) redirect(`/login?err=${enc("Please sign in first.")}`);
 
-  // Recruiting v2: season comes from leagues.current_season inside the RPC.
   const { error } = await supabase.rpc("set_recruit_visit", {
     p_league_id: leagueId,
     p_team_id: teamId,
     p_recruit_id: recruitId,
     p_week: week,
-    p_visit_type: visitType
+    p_visit_type: visitType,
   });
 
   if (error) redirect(leaguePath(leagueId, `/recruiting?err=${enc(error.message)}`));
