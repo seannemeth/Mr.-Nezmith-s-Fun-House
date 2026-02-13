@@ -1,14 +1,14 @@
-// app/api/db-fingerprint/route.ts
+// src/app/api/db-fingerprint/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "../../../lib/supabaseServer";
+import { createSupabaseServerClient } from "../../../lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
+export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const leagueId = searchParams.get("leagueId");
+    const url = new URL(request.url);
+    const leagueId = url.searchParams.get("leagueId");
 
     const hasUrl = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
     const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
@@ -23,27 +23,30 @@ export async function GET(req: Request) {
         })()
       : null;
 
-    const supabase = supabaseServer();
+    const supabase = createSupabaseServerClient();
 
-    // Auth diagnostics
     const sessionRes = await supabase.auth.getSession();
     const userRes = await supabase.auth.getUser();
 
-    const userId = userRes.data?.user?.id ?? null;
+    const user = userRes.data?.user ?? null;
 
-    // DB ping (lightweight)
     const ping = await supabase.from("leagues").select("id").limit(1);
 
-    // membership rows visible (RLS applies)
-    const memberships =
-      userId && leagueId
-        ? await supabase
-            .from("memberships")
-            .select("league_id, team_id, role")
-            .eq("league_id", leagueId)
-        : ({ data: null, error: null } as any);
+    let membership: any = null;
+    let membershipError: any = null;
 
-    // recruits visible (RLS applies)
+    if (user && leagueId) {
+      const res = await supabase
+        .from("memberships")
+        .select("league_id, team_id, role, user_id")
+        .eq("league_id", leagueId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      membership = res.data;
+      membershipError = res.error;
+    }
+
     const recruits =
       leagueId
         ? await supabase
@@ -51,18 +54,6 @@ export async function GET(req: Request) {
             .select("id", { count: "exact", head: true })
             .eq("league_id", leagueId)
         : ({ data: null, error: null, count: null } as any);
-
-    // RPC probe (if function exists)
-    const rpc =
-      leagueId
-        ? await supabase.rpc("get_recruit_list_v1", {
-            p_league_id: leagueId,
-            p_limit: 5,
-            p_offset: 0,
-            p_only_uncommitted: true,
-            p_team_id: null,
-          })
-        : ({ data: null, error: null } as any);
 
     return NextResponse.json({
       ok: true,
@@ -74,7 +65,7 @@ export async function GET(req: Request) {
       auth: {
         sessionHasUser: Boolean(sessionRes.data?.session?.user),
         sessionError: sessionRes.error?.message ?? null,
-        userId,
+        user: user ? { id: user.id, email: user.email } : null,
         userError: userRes.error?.message ?? null,
       },
       db: {
@@ -82,13 +73,10 @@ export async function GET(req: Request) {
         pingCount: Array.isArray(ping.data) ? ping.data.length : null,
       },
       leagueId,
-      membershipsError: memberships.error?.message ?? null,
-      memberships: memberships.data ?? null,
+      membership,
+      membershipError: membershipError?.message ?? null,
       recruitsCountVisible: (recruits as any).count ?? null,
       recruitsError: recruits.error?.message ?? null,
-      rpcError: rpc.error?.message ?? null,
-      rpcSampleCount: Array.isArray(rpc.data) ? rpc.data.length : null,
-      rpcSample: rpc.data ?? null,
     });
   } catch (e: any) {
     return NextResponse.json(
