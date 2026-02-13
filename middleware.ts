@@ -1,55 +1,19 @@
 // middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
 
 /**
- * Vercel Edge middleware must be FAST.
- * Do NOT do DB queries here. Only refresh session cookies and (optionally) protect obvious routes.
+ * HARD RULE: Edge middleware must be near-zero work.
+ * No Supabase calls. No DB. No fetch. No auth refresh here.
+ *
+ * Do auth/membership gating inside server components (page.tsx) and route handlers instead.
  */
-export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return req.cookies.get(name)?.value;
-        },
-        set(name: string, value: string, options: any) {
-          res.cookies.set({ name, value, ...options });
-        },
-        remove(name: string, options: any) {
-          res.cookies.set({ name, value: "", ...options });
-        },
-      },
-    }
-  );
-
-  // Refresh auth session (fast). Do NOT call DB tables/RPC here.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  // Optional: protect "league" routes at a high level.
-  // Keep this very simple. No membership checks here.
-  const path = req.nextUrl.pathname;
-  const isLeagueRoute = path.startsWith("/league");
-
-  if (isLeagueRoute && !user) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/";
-    url.searchParams.set("next", path);
-    return NextResponse.redirect(url);
-  }
-
-  return res;
+export function middleware(_req: NextRequest) {
+  return NextResponse.next();
 }
 
-// Do not run middleware on static assets.
 export const config = {
   matcher: [
+    // Run on everything except static assets
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map)$).*)",
   ],
 };
