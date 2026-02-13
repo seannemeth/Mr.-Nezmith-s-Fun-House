@@ -1,579 +1,1010 @@
 // app/league/[leagueId]/recruiting/recruiting-client.tsx
-'use client';
+"use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import * as React from "react";
+import { createBrowserClient } from "@supabase/ssr";
 
-type UUID = string;
-
-type RecruitRow = {
-  id: UUID; // internal only, NEVER rendered
-  name: string;
-  position: string;
-  stars: number;
-  archetype: string | null;
-  height_in: number | null;
-  weight_lb: number | null;
-
-  interest?: number | null; // "My Interest" if available from a view
-  offered?: boolean | null;
-  on_board?: boolean | null;
+type Top8Entry = {
+  team_id: string;
+  team_name: string;
+  interest: number;
 };
 
-type LeagueRow = {
-  season?: number | null;
-  week?: number | null;
-  current_season?: number | null;
-  current_week?: number | null;
-  active_season?: number | null;
-  active_week?: number | null;
+type Recruit = Record<string, any> & {
+  _recruit_id: string;
+  my_interest?: number;
+  top8?: Top8Entry[];
+  on_board?: boolean;
+
+  my_visit_week?: number | null;
+  my_visit_bonus?: number | null;
+  my_visit_applied?: boolean;
+
+  height_in?: number | null;
+  weight_lb?: number | null;
+  archetype?: string | null;
 };
 
-type ContactType = 'text' | 'dm' | 'social' | 'call' | 'coach_visit' | 'home_visit';
+type ContactType = "call" | "text" | "dm" | "social" | "coach_visit" | "home_visit";
 
-const CONTACT_TYPES: { key: ContactType; label: string }[] = [
-  { key: 'text', label: 'Text' },
-  { key: 'dm', label: 'DM' },
-  { key: 'social', label: 'Social' },
-  { key: 'call', label: 'Call' },
-  { key: 'coach_visit', label: 'Coach Visit' },
-  { key: 'home_visit', label: 'Home Visit' },
-];
-
-function supabaseBrowser() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  return createClient(url, anon);
-}
-
-function clamp(n: number, min: number, max: number) {
+function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
 }
 
-function formatHeight(inches: number | null) {
-  if (!inches || inches <= 0) return '—';
-  const ft = Math.floor(inches / 12);
-  const inch = inches % 12;
+function fmtMoney(n: number | null | undefined) {
+  const v = Number(n ?? 0);
+  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function fmtHeight(inches?: number | null) {
+  const v = Number(inches ?? 0);
+  if (!v) return "";
+  const ft = Math.floor(v / 12);
+  const inch = v % 12;
   return `${ft}'${inch}"`;
 }
 
-function formatWeight(lb: number | null) {
-  if (!lb || lb <= 0) return '—';
-  return `${lb} lb`;
+function InterestBar({ value }: { value: number }) {
+  const v = clamp(Number(value ?? 0));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
+      <div
+        style={{
+          width: 130,
+          height: 10,
+          borderRadius: 999,
+          background: "rgba(255,255,255,0.10)",
+          overflow: "hidden",
+          border: "1px solid rgba(255,255,255,0.16)",
+        }}
+      >
+        <div style={{ width: `${v}%`, height: "100%", background: "rgba(255,255,255,0.78)" }} />
+      </div>
+      <div
+        style={{
+          fontVariantNumeric: "tabular-nums",
+          width: 34,
+          textAlign: "right",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      >
+        {v}
+      </div>
+    </div>
+  );
 }
 
-type SortKey =
-  | 'name'
-  | 'position'
-  | 'archetype'
-  | 'height_in'
-  | 'weight_lb'
-  | 'stars'
-  | 'interest';
+function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "neutral" }) {
+  const styles: Record<string, React.CSSProperties> = {
+    ok: {
+      background: "rgba(120, 255, 160, 0.16)",
+      border: "1px solid rgba(120, 255, 160, 0.30)",
+      color: "rgba(230, 255, 240, 0.95)",
+    },
+    warn: {
+      background: "rgba(255, 210, 120, 0.16)",
+      border: "1px solid rgba(255, 210, 120, 0.30)",
+      color: "rgba(255, 245, 230, 0.95)",
+    },
+    neutral: {
+      background: "rgba(255,255,255,0.10)",
+      border: "1px solid rgba(255,255,255,0.16)",
+      color: "rgba(255,255,255,0.90)",
+    },
+  };
 
-function pickSeasonWeek(league: LeagueRow | null): { season: number; week: number } {
-  const season =
-    Number(league?.current_season ?? league?.season ?? league?.active_season ?? 1) || 1;
-  const week = Number(league?.current_week ?? league?.week ?? league?.active_week ?? 1) || 1;
-  return { season, week };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontWeight: 900,
+        fontSize: 12,
+        ...styles[tone],
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
-type SelectMode = 'rich' | 'base';
+function getName(r: Recruit) {
+  return r.name ?? r.full_name ?? [r.first_name, r.last_name].filter(Boolean).join(" ") ?? "Recruit";
+}
+function getPos(r: Recruit) {
+  return r.position ?? r.pos ?? "";
+}
+function getStars(r: Recruit) {
+  const s = r.stars ?? r.rating_stars ?? r.star_rating;
+  return s == null ? "" : String(s);
+}
+function getOfferFlag(r: Recruit) {
+  return Boolean(r.offer_made ?? r.has_offer ?? r.offered ?? r.offer ?? false);
+}
+function getArch(r: Recruit) {
+  return (r.archetype ?? r.archetype_name ?? "").toString();
+}
 
-const SELECTS: Record<SelectMode, string> = {
-  // for views that already join interest/offer/board
-  rich: 'id,name,position,stars,archetype,height_in,weight_lb,my_interest,interest,offered,on_board',
-  // for plain recruits table
-  base: 'id,name,position,stars,archetype,height_in,weight_lb',
-};
+function PillButton(props: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={props.onClick}
+      style={{
+        padding: "10px 12px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: props.active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+        color: "rgba(255,255,255,0.95)",
+        cursor: "pointer",
+        fontWeight: 800,
+      }}
+    >
+      {props.children}
+    </button>
+  );
+}
 
-export default function RecruitingClient({
-  leagueId,
-  teamId,
-}: {
-  leagueId: UUID;
-  teamId: UUID;
+function HeaderChip(props: { label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "8px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(255,255,255,0.16)",
+        background: "rgba(255,255,255,0.08)",
+        fontWeight: 900,
+        fontSize: 12,
+        color: "rgba(255,255,255,0.92)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {props.label}
+    </span>
+  );
+}
+
+function ActionButton(props: {
+  variant: "primary" | "secondary" | "neutral" | "danger";
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
-  const supabase = useMemo(() => supabaseBrowser(), []);
+  const base: React.CSSProperties = {
+    padding: "10px 12px",
+    borderRadius: 10,
+    fontWeight: 900,
+    letterSpacing: "0.2px",
+    border: "1px solid rgba(255,255,255,0.18)",
+    cursor: props.disabled ? "not-allowed" : "pointer",
+    opacity: props.disabled ? 0.65 : 1,
+    color: "rgba(255,255,255,0.98)",
+  };
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const variants: Record<string, React.CSSProperties> = {
+    primary: { background: "rgba(80,160,255,0.35)", border: "1px solid rgba(120,190,255,0.45)" },
+    secondary: { background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)" },
+    neutral: { background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.16)" },
+    danger: { background: "rgba(255,90,90,0.20)", border: "1px solid rgba(255,120,120,0.35)" },
+  };
 
-  const [season, setSeason] = useState<number>(1);
-  const [week, setWeek] = useState<number>(1);
+  return (
+    <button onClick={props.onClick} disabled={props.disabled} style={{ ...base, ...variants[props.variant] }}>
+      {props.children}
+    </button>
+  );
+}
 
-  const [cash, setCash] = useState<number>(0);
-  const [recruits, setRecruits] = useState<RecruitRow[]>([]);
+function ContactButton(props: {
+  used: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const base: React.CSSProperties = {
+    padding: "10px 12px",
+    borderRadius: 10,
+    fontWeight: 900,
+    letterSpacing: "0.2px",
+    border: "1px solid rgba(255,255,255,0.18)",
+    cursor: props.disabled ? "not-allowed" : "pointer",
+    opacity: props.disabled ? 0.70 : 1,
+    color: "rgba(255,255,255,0.98)",
+    background: "rgba(255,255,255,0.10)",
+  };
 
-  const [expanded, setExpanded] = useState<UUID | null>(null);
+  const usedStyle: React.CSSProperties = props.used
+    ? {
+        background: "rgba(120, 255, 160, 0.16)",
+        border: "1px solid rgba(120, 255, 160, 0.30)",
+        color: "rgba(230, 255, 240, 0.95)",
+      }
+    : {};
 
-  const [weeklyUsed, setWeeklyUsed] = useState<number>(0);
-  const [usedContacts, setUsedContacts] = useState<Record<string, boolean>>({});
+  return (
+    <button onClick={props.onClick} disabled={props.disabled} style={{ ...base, ...usedStyle }}>
+      {props.children}
+    </button>
+  );
+}
 
-  const [sortKey, setSortKey] = useState<SortKey>('stars');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+type SortKey = "name" | "pos" | "arch" | "ht" | "wt" | "stars" | "interest";
+type SortDir = "asc" | "desc";
 
-  function usedKey(recruitId: UUID, contactType: ContactType) {
-    return `${recruitId}:${contactType}`;
-  }
+function SortHeader(props: { label: string; active: boolean; dir: SortDir; onClick: () => void }) {
+  return (
+    <button
+      onClick={props.onClick}
+      style={{
+        all: "unset",
+        cursor: "pointer",
+        fontWeight: 900,
+        color: "rgba(255,255,255,0.95)",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        userSelect: "none",
+      }}
+      aria-label={`Sort by ${props.label}`}
+    >
+      {props.label}
+      {props.active ? (
+        <span style={{ opacity: 0.85 }}>{props.dir === "asc" ? "▲" : "▼"}</span>
+      ) : (
+        <span style={{ opacity: 0.35 }}>↕</span>
+      )}
+    </button>
+  );
+}
 
-  async function selectRecruits(
-    table: string,
-    mode: SelectMode,
-    useLeagueFilter: boolean
-  ): Promise<RecruitRow[] | null> {
-    let q = supabase.from(table).select(SELECTS[mode]).limit(500);
-    if (useLeagueFilter) q = q.eq('league_id', leagueId);
+export default function RecruitingClient(props: {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  leagueId: string;
+  teamId: string;
+  recruits: Recruit[];
+  currentSeason: number;
+  currentWeek: number;
+}) {
+  const supabase = React.useMemo(
+    () => createBrowserClient(props.supabaseUrl, props.supabaseAnonKey),
+    [props.supabaseUrl, props.supabaseAnonKey]
+  );
 
-    const { data, error } = await q;
-    if (error) return null;
+  const [rows, setRows] = React.useState<Recruit[]>(props.recruits ?? []);
+  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [busy, setBusy] = React.useState<Record<string, boolean>>({});
+  const [query, setQuery] = React.useState("");
+  const [view, setView] = React.useState<"all" | "board">("all");
+  const [error, setError] = React.useState<string | null>(null);
+  const [hover, setHover] = React.useState<string | null>(null);
+  const [visitWeekChoice, setVisitWeekChoice] = React.useState<Record<string, number>>({});
 
-    const mapped: RecruitRow[] = (data ?? []).map((r: any) => ({
-      id: String(r.id),
-      name: r.name ?? 'Unknown',
-      position: r.position ?? '—',
-      stars: Number(r.stars ?? 0),
-      archetype: r.archetype ?? null,
-      height_in: r.height_in ?? null,
-      weight_lb: r.weight_lb ?? null,
-      interest: r.my_interest ?? r.interest ?? null,
-      offered: r.offered ?? null,
-      on_board: r.on_board ?? null,
-    }));
+  const [sortKey, setSortKey] = React.useState<SortKey>("interest");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
 
-    return mapped;
-  }
+  const [cash, setCash] = React.useState<number | null>(null);
+  const [weeklyCap, setWeeklyCap] = React.useState<number>(100);
+  const [weeklyUsed, setWeeklyUsed] = React.useState<number>(0);
 
-  async function loadRecruits(): Promise<RecruitRow[]> {
-    // Try rich recruiting views first
-    const richSources: Array<{ table: string; leagueFilter: boolean }> = [
-      { table: 'recruiting_recruits_v1', leagueFilter: true },
-      { table: 'recruiting_recruits', leagueFilter: true },
-      { table: 'league_recruits', leagueFilter: true },
-    ];
+  const [usedContacts, setUsedContacts] = React.useState<Record<string, Record<string, boolean>>>({});
 
-    for (const s of richSources) {
-      const rows = await selectRecruits(s.table, 'rich', s.leagueFilter);
-      if (rows && rows.length) return rows;
-      if (rows) return rows; // empty but valid query => stop searching
-    }
+  React.useEffect(() => setRows(props.recruits ?? []), [props.recruits]);
 
-    // Fallback: recruits table (retry base select if rich fails)
-    // 1) try league scoped base
-    let rows = await selectRecruits('recruits', 'base', true);
-    if (rows) return rows;
+  const boardCount = React.useMemo(() => rows.filter((r) => Boolean(r.on_board)).length, [rows]);
 
-    // 2) try non-league base (global pool)
-    rows = await selectRecruits('recruits', 'base', false);
-    if (rows) return rows;
+  React.useEffect(() => {
+    let cancelled = false;
 
-    // If none worked, return empty
-    return [];
-  }
-
-  async function loadAll() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      // League season/week
-      const { data: league, error: leagueErr } = await supabase
-        .from('leagues')
-        .select('*')
-        .eq('id', leagueId)
-        .maybeSingle();
-
-      if (leagueErr) throw leagueErr;
-
-      const sw = pickSeasonWeek(league as any);
-      setSeason(sw.season);
-      setWeek(sw.week);
-
-      // Cash (do not assume team_finances.week exists)
-      const { data: fin, error: finErr } = await supabase
-        .from('team_finances')
-        .select('cash_balance')
-        .eq('league_id', leagueId)
-        .eq('team_id', teamId)
-        .order('season', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (finErr) {
-        const { data: fin2, error: fin2Err } = await supabase
-          .from('team_finances')
-          .select('cash_balance')
-          .eq('league_id', leagueId)
-          .eq('team_id', teamId)
-          .limit(1)
+    async function loadHeaderAndContacts() {
+      try {
+        const { data: fin } = await supabase
+          .from("team_finances")
+          .select("cash_balance")
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
           .maybeSingle();
 
-        if (fin2Err) throw fin2Err;
-        setCash(Number((fin2 as any)?.cash_balance ?? 0));
-      } else {
-        setCash(Number((fin as any)?.cash_balance ?? 0));
+        if (!cancelled) setCash(Number(fin?.cash_balance ?? 0));
+
+        const { data: contacts } = await supabase
+          .from("recruiting_contacts")
+          .select("recruit_id, contact_type, points")
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .eq("season", props.currentSeason)
+          .eq("week", props.currentWeek);
+
+        const usedPts = Array.isArray(contacts)
+          ? contacts.reduce((a: number, r: any) => a + Number(r?.points ?? 0), 0)
+          : 0;
+
+        const usedMap: Record<string, Record<string, boolean>> = {};
+        if (Array.isArray(contacts)) {
+          for (const c of contacts) {
+            const rid = String(c?.recruit_id ?? "");
+            const ct = String(c?.contact_type ?? "");
+            if (!rid || !ct) continue;
+            if (!usedMap[rid]) usedMap[rid] = {};
+            usedMap[rid][ct] = true;
+          }
+        }
+
+        if (!cancelled) {
+          setWeeklyUsed(usedPts);
+          setWeeklyCap(100);
+          setUsedContacts(usedMap);
+        }
+      } catch {
+        // silent
       }
-
-      // Recruits
-      const recs = await loadRecruits();
-      setRecruits(recs);
-
-      // Used contacts for current season/week
-      const { data: contacts, error: cErr } = await supabase
-        .from('recruiting_contacts')
-        .select('recruit_id, contact_type')
-        .eq('league_id', leagueId)
-        .eq('team_id', teamId)
-        .eq('season', sw.season)
-        .eq('week', sw.week);
-
-      if (cErr) throw cErr;
-
-      const used: Record<string, boolean> = {};
-      (contacts ?? []).forEach((c: any) => {
-        used[usedKey(String(c.recruit_id), c.contact_type)] = true;
-      });
-      setUsedContacts(used);
-      setWeeklyUsed((contacts ?? []).length);
-
-      setExpanded(null);
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load recruiting data');
-    } finally {
-      setLoading(false);
     }
-  }
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueId, teamId]);
+    loadHeaderAndContacts();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, props.leagueId, props.teamId, props.currentSeason, props.currentWeek]);
 
-  function toggleSort(next: SortKey) {
-    if (sortKey === next) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+  const weeklyRemaining = Math.max(0, weeklyCap - weeklyUsed);
+
+  function toggleSort(nextKey: SortKey) {
+    if (sortKey === nextKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
-      setSortKey(next);
-      setSortDir(next === 'name' ? 'asc' : 'desc');
+      setSortKey(nextKey);
+      setSortDir(nextKey === "name" || nextKey === "pos" || nextKey === "arch" ? "asc" : "desc");
     }
   }
 
-  const sortedRecruits = useMemo(() => {
-    const copy = [...recruits];
-    const dir = sortDir === 'asc' ? 1 : -1;
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = rows;
 
-    copy.sort((a, b) => {
-      const av: any = (a as any)[sortKey];
-      const bv: any = (b as any)[sortKey];
+    if (view === "board") list = list.filter((r) => Boolean(r.on_board));
+    if (q) list = list.filter((r) => getName(r).toLowerCase().includes(q) || String(getPos(r)).toLowerCase().includes(q));
 
-      if (typeof av === 'string' || typeof bv === 'string') {
-        const as = (av ?? '').toString().toLowerCase();
-        const bs = (bv ?? '').toString().toLowerCase();
-        if (as < bs) return -1 * dir;
-        if (as > bs) return 1 * dir;
-        return 0;
-      }
+    const dir = sortDir === "asc" ? 1 : -1;
 
-      const an = Number(av ?? -Infinity);
-      const bn = Number(bv ?? -Infinity);
-      if (an < bn) return -1 * dir;
-      if (an > bn) return 1 * dir;
-      return 0;
+    const getVal = (r: Recruit): string | number => {
+      if (sortKey === "name") return getName(r);
+      if (sortKey === "pos") return String(getPos(r) ?? "");
+      if (sortKey === "arch") return String(getArch(r) ?? "");
+      if (sortKey === "ht") return Number(r.height_in ?? 0);
+      if (sortKey === "wt") return Number(r.weight_lb ?? 0);
+      if (sortKey === "stars") return Number(getStars(r) || 0);
+      return Number(r.my_interest ?? 0);
+    };
+
+    return list.slice().sort((a, b) => {
+      const av = getVal(a);
+      const bv = getVal(b);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
     });
+  }, [rows, query, view, sortKey, sortDir]);
 
-    return copy;
-  }, [recruits, sortKey, sortDir]);
+  async function refreshCash() {
+    const { data: fin } = await supabase
+      .from("team_finances")
+      .select("cash_balance")
+      .eq("league_id", props.leagueId)
+      .eq("team_id", props.teamId)
+      .maybeSingle();
+    setCash(Number(fin?.cash_balance ?? cash ?? 0));
+  }
 
-  async function applyContact(recruitId: UUID, contactType: ContactType) {
-    const k = usedKey(recruitId, contactType);
-    if (usedContacts[k]) return;
+  async function onToggleOffer(r: Recruit) {
+    const rid = r._recruit_id;
+    const wasOffered = getOfferFlag(r);
 
-    setUsedContacts((prev) => ({ ...prev, [k]: true }));
-    setWeeklyUsed((n) => n + 1);
+    setError(null);
+    setBusy((m) => ({ ...m, [rid]: true }));
+
+    setRows((prev) =>
+      prev.map((x) =>
+        x._recruit_id === rid
+          ? { ...x, offer_made: !wasOffered, has_offer: !wasOffered, offered: !wasOffered }
+          : x
+      )
+    );
 
     try {
-      const { error: rpcErr } = await supabase.rpc('recruiting_apply_contact_v1', {
-        p_league_id: leagueId,
-        p_team_id: teamId,
-        p_recruit_id: recruitId,
-        p_season: season,
-        p_week: week,
+      const { data, error: rpcErr } = await supabase.rpc("recruiting_toggle_offer_paid_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_season: props.currentSeason,
+      });
+
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      const nowOffered = Boolean(data);
+      setRows((prev) =>
+        prev.map((x) =>
+          x._recruit_id === rid
+            ? { ...x, offer_made: nowOffered, has_offer: nowOffered, offered: nowOffered }
+            : x
+        )
+      );
+
+      await refreshCash();
+    } catch (e: any) {
+      setRows((prev) =>
+        prev.map((x) =>
+          x._recruit_id === rid
+            ? { ...x, offer_made: wasOffered, has_offer: wasOffered, offered: wasOffered }
+            : x
+        )
+      );
+      setError(e?.message ?? "Failed to toggle offer.");
+    } finally {
+      setBusy((m) => ({ ...m, [rid]: false }));
+    }
+  }
+
+  async function onToggleBoard(r: Recruit) {
+    const rid = r._recruit_id;
+    const wasOn = Boolean(r.on_board);
+
+    setError(null);
+    setBusy((m) => ({ ...m, [`board:${rid}`]: true }));
+
+    setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: !wasOn } : x)));
+
+    try {
+      if (!wasOn) {
+        const { error: upErr } = await supabase.from("recruiting_board").upsert(
+          {
+            league_id: props.leagueId,
+            team_id: props.teamId,
+            recruit_id: rid,
+            season: props.currentSeason,
+          },
+          { onConflict: "league_id,team_id,recruit_id,season", ignoreDuplicates: true }
+        );
+        if (upErr) throw new Error(upErr.message);
+      } else {
+        const { error: delErr } = await supabase
+          .from("recruiting_board")
+          .delete()
+          .eq("league_id", props.leagueId)
+          .eq("team_id", props.teamId)
+          .eq("recruit_id", rid)
+          .eq("season", props.currentSeason);
+        if (delErr) throw new Error(delErr.message);
+      }
+    } catch (e: any) {
+      setRows((prev) => prev.map((x) => (x._recruit_id === rid ? { ...x, on_board: wasOn } : x)));
+      setError(e?.message ?? "Failed to update board.");
+    } finally {
+      setBusy((m) => ({ ...m, [`board:${rid}`]: false }));
+    }
+  }
+
+  function getDefaultVisitWeek(r: Recruit) {
+    const scheduled = Number(r.my_visit_week ?? 0);
+    if (scheduled > 0) return scheduled;
+    return Math.min(16, Math.max(1, props.currentWeek + 1));
+  }
+
+  async function onScheduleVisit(r: Recruit) {
+    const rid = r._recruit_id;
+    const chosenWeek = visitWeekChoice[rid] ?? getDefaultVisitWeek(r);
+
+    setError(null);
+    setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
+
+    setRows((prev) =>
+      prev.map((x) =>
+        x._recruit_id === rid
+          ? { ...x, my_visit_week: chosenWeek, my_visit_bonus: x.my_visit_bonus ?? 5, my_visit_applied: false }
+          : x
+      )
+    );
+
+    try {
+      const { error: rpcErr } = await supabase.rpc("schedule_recruit_visit_paid_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_week: chosenWeek,
+        p_bonus: 5,
+        p_season: props.currentSeason,
+      });
+
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      await refreshCash();
+    } catch (e: any) {
+      setRows((prev) =>
+        prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+      );
+      setError(e?.message ?? "Failed to schedule visit.");
+    } finally {
+      setBusy((m) => ({ ...m, [`visit:${rid}`]: false }));
+    }
+  }
+
+  async function onRemoveVisit(r: Recruit) {
+    const rid = r._recruit_id;
+
+    setError(null);
+    setBusy((m) => ({ ...m, [`visit:${rid}`]: true }));
+
+    const prevWeek = r.my_visit_week ?? null;
+    const prevBonus = r.my_visit_bonus ?? null;
+
+    setRows((prev) =>
+      prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: null, my_visit_bonus: null } : x))
+    );
+
+    try {
+      const { error: rpcErr } = await supabase.rpc("remove_recruit_visit_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+      });
+
+      if (rpcErr) throw new Error(rpcErr.message);
+    } catch (e: any) {
+      setRows((prev) =>
+        prev.map((x) => (x._recruit_id === rid ? { ...x, my_visit_week: prevWeek, my_visit_bonus: prevBonus } : x))
+      );
+      setError(e?.message ?? "Failed to remove visit.");
+    } finally {
+      setBusy((m) => ({ ...m, [`visit:${rid}`]: false }));
+    }
+  }
+
+  function isUsed(rid: string, ct: ContactType) {
+    return Boolean(usedContacts?.[rid]?.[ct]);
+  }
+
+  async function onContact(r: Recruit, contactType: ContactType) {
+    const rid = r._recruit_id;
+    const key = `contact:${contactType}:${rid}`;
+
+    if (isUsed(rid, contactType)) return;
+
+    setError(null);
+    setBusy((m) => ({ ...m, [key]: true }));
+
+    try {
+      const { data, error: rpcErr } = await supabase.rpc("recruiting_apply_contact_v1", {
+        p_league_id: props.leagueId,
+        p_team_id: props.teamId,
+        p_recruit_id: rid,
+        p_season: props.currentSeason,
+        p_week: props.currentWeek,
         p_contact_type: contactType,
       });
 
       if (rpcErr) {
-        const msg = (rpcErr.message ?? '').toLowerCase();
-        const isUnique =
-          msg.includes('duplicate key') ||
-          msg.includes('unique') ||
-          msg.includes('recruiting_contacts_unique_weekly');
-
-        if (!isUnique) {
-          setUsedContacts((prev) => {
-            const next = { ...prev };
-            delete next[k];
-            return next;
-          });
-          setWeeklyUsed((n) => Math.max(0, n - 1));
-          throw rpcErr;
+        const msg = String(rpcErr.message ?? "");
+        if (msg.toLowerCase().includes("recruiting_contacts_unique_weekly")) {
+          setUsedContacts((m) => ({
+            ...m,
+            [rid]: { ...(m[rid] ?? {}), [contactType]: true },
+          }));
+          return;
         }
+        throw new Error(rpcErr.message);
       }
+
+      const delta = Number((data as any)?.interest_delta ?? 0);
+      const used = Number((data as any)?.weekly_used ?? weeklyUsed);
+      const cap = Number((data as any)?.weekly_cap ?? weeklyCap);
+      const cost = Number((data as any)?.cash_cost ?? 0);
+
+      setUsedContacts((m) => ({
+        ...m,
+        [rid]: { ...(m[rid] ?? {}), [contactType]: true },
+      }));
+
+      setRows((prev) =>
+        prev.map((x) =>
+          x._recruit_id === rid ? { ...x, my_interest: clamp(Number(x.my_interest ?? 0) + delta) } : x
+        )
+      );
+
+      setWeeklyUsed(used);
+      setWeeklyCap(cap);
+      setCash((c) => Number((c ?? 0) - cost));
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to apply contact');
+      setError(e?.message ?? "Contact failed.");
+    } finally {
+      setBusy((m) => ({ ...m, [key]: false }));
     }
   }
-
-  async function toggleOffer(recruitId: UUID) {
-    try {
-      const { error: rpcErr } = await supabase.rpc('recruiting_toggle_offer_paid_v1', {
-        p_league_id: leagueId,
-        p_team_id: teamId,
-        p_recruit_id: recruitId,
-        p_season: season,
-        p_week: week,
-      });
-      if (rpcErr) throw rpcErr;
-      await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to toggle offer');
-    }
-  }
-
-  async function toggleBoard(recruitId: UUID) {
-    try {
-      const { error: upErr } = await supabase
-        .from('recruiting_board')
-        .upsert(
-          { league_id: leagueId, team_id: teamId, recruit_id: recruitId, season, week },
-          { onConflict: 'league_id,team_id,recruit_id', ignoreDuplicates: true }
-        );
-
-      if (upErr) throw upErr;
-      await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to add to board');
-    }
-  }
-
-  const headerCash = `$${Number(cash ?? 0).toLocaleString()}`;
 
   return (
-    <div className="w-full">
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="rounded-lg border px-3 py-2">
-            <div className="text-xs opacity-70">Cash</div>
-            <div className="text-lg font-semibold">{headerCash}</div>
-          </div>
-          <div className="rounded-lg border px-3 py-2">
-            <div className="text-xs opacity-70">Season / Week</div>
-            <div className="text-lg font-semibold">
-              {season} / {week}
-            </div>
-          </div>
-          <div className="rounded-lg border px-3 py-2">
-            <div className="text-xs opacity-70">Contacts Used</div>
-            <div className="text-lg font-semibold">{weeklyUsed}</div>
+    <div style={{ color: "rgba(255,255,255,0.94)" }}>
+      {/* HEADER */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: 0.2 }}>Recruiting</div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            Season {props.currentSeason} • Week {props.currentWeek}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-black/5"
-            onClick={() => loadAll()}
-            disabled={loading}
-          >
-            Refresh
-          </button>
-        </div>
+        <div style={{ flex: 1 }} />
+
+        <HeaderChip label={`Cash: $${fmtMoney(cash)}`} />
+        <HeaderChip label={`Contact Pts: ${Math.max(0, weeklyCap - weeklyUsed)}/${weeklyCap}`} />
+        <HeaderChip label={`Offer: $25k`} />
+        <HeaderChip label={`Visit: $50k`} />
+        <HeaderChip label={`Call/Text/DM: $5–10k`} />
       </div>
 
-      {error && (
-        <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+      {/* FILTERS */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        <PillButton active={view === "all"} onClick={() => setView("all")}>
+          All Recruits
+        </PillButton>
+        <PillButton active={view === "board"} onClick={() => setView("board")}>
+          My Board ({boardCount})
+        </PillButton>
+
+        <div style={{ flex: 1 }} />
+
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name or position…"
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: "rgba(255,255,255,0.06)",
+            color: "rgba(255,255,255,0.92)",
+            minWidth: 260,
+            outline: "none",
+          }}
+        />
+      </div>
+
+      {error ? (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: 10,
+            borderRadius: 12,
+            border: "1px solid rgba(255,120,120,0.45)",
+            background: "rgba(255,0,0,0.10)",
+            color: "rgba(255,230,230,0.95)",
+            fontWeight: 700,
+          }}
+        >
           {error}
         </div>
-      )}
+      ) : null}
 
-      <div className="w-full overflow-x-auto rounded-xl border">
-        <div className="min-w-[1100px]">
-          <div
-            className="grid items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-semibold"
-            style={{
-              gridTemplateColumns:
-                'minmax(220px, 2fr) 90px 140px 90px 90px 90px minmax(260px, 1fr) 220px',
-            }}
-          >
-            <button className="text-left hover:underline" onClick={() => toggleSort('name')}>
-              Recruit {sortKey === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('position')}>
-              Pos {sortKey === 'position' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('archetype')}>
-              Archetype {sortKey === 'archetype' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('height_in')}>
-              Ht {sortKey === 'height_in' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('weight_lb')}>
-              Wt {sortKey === 'weight_lb' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('stars')}>
-              Stars {sortKey === 'stars' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <button className="text-left hover:underline" onClick={() => toggleSort('interest')}>
-              My Interest {sortKey === 'interest' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-            </button>
-            <div className="sticky right-0 bg-black/5 pl-2">Actions</div>
-          </div>
+      {/* TABLE SHELL (FIXED: no horizontal clipping) */}
+      <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 16 }}>
+        <div style={{ overflowX: "auto" }}>
+          <div style={{ minWidth: 1040 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "26px 1.2fr 70px 120px 70px 70px 70px 220px 120px 140px",
+                gap: 10,
+                padding: "10px 12px",
+                fontWeight: 900,
+                background: "rgba(255,255,255,0.10)",
+                borderBottom: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.95)",
+                alignItems: "center",
+              }}
+            >
+              <div />
+              <SortHeader label="Recruit" active={sortKey === "name"} dir={sortDir} onClick={() => toggleSort("name")} />
+              <SortHeader label="Pos" active={sortKey === "pos"} dir={sortDir} onClick={() => toggleSort("pos")} />
+              <SortHeader label="Archetype" active={sortKey === "arch"} dir={sortDir} onClick={() => toggleSort("arch")} />
+              <SortHeader label="Ht" active={sortKey === "ht"} dir={sortDir} onClick={() => toggleSort("ht")} />
+              <SortHeader label="Wt" active={sortKey === "wt"} dir={sortDir} onClick={() => toggleSort("wt")} />
+              <SortHeader label="Stars" active={sortKey === "stars"} dir={sortDir} onClick={() => toggleSort("stars")} />
+              <SortHeader label="My Interest" active={sortKey === "interest"} dir={sortDir} onClick={() => toggleSort("interest")} />
+              <div>Board</div>
+              <div />
+            </div>
 
-          {loading ? (
-            <div className="px-3 py-6 text-sm opacity-70">Loading recruits…</div>
-          ) : (
-            <div>
-              {sortedRecruits.map((r) => {
-                const isOpen = expanded === r.id;
+            {filtered.map((r) => {
+              const rid = r._recruit_id;
+              const open = Boolean(expanded[rid]);
+              const offered = getOfferFlag(r);
+              const top8 = Array.isArray(r.top8) ? (r.top8 as Top8Entry[]) : [];
+              const myInterest = Number(r.my_interest ?? 0);
+              const onBoard = Boolean(r.on_board);
+              const rowHover = hover === rid;
 
-                return (
-                  <div key={r.id} className="border-b">
-                    <div
-                      className="grid items-center gap-2 px-3 py-2 text-sm"
+              const scheduledWeek = r.my_visit_week ? Number(r.my_visit_week) : null;
+              const scheduledBonus = r.my_visit_bonus != null ? Number(r.my_visit_bonus) : null;
+              const chosenWeek = visitWeekChoice[rid] ?? Math.min(16, Math.max(1, props.currentWeek + 1));
+
+              const pointsLeft = Math.max(0, weeklyCap - weeklyUsed);
+
+              const usedText = isUsed(rid, "text");
+              const usedDm = isUsed(rid, "dm");
+              const usedSocial = isUsed(rid, "social");
+              const usedCall = isUsed(rid, "call");
+              const usedCoach = isUsed(rid, "coach_visit");
+              const usedHome = isUsed(rid, "home_visit");
+
+              return (
+                <div key={rid} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div
+                    onMouseEnter={() => setHover(rid)}
+                    onMouseLeave={() => setHover(null)}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "26px 1.2fr 70px 120px 70px 70px 70px 220px 120px 140px",
+                      gap: 10,
+                      padding: "10px 12px",
+                      alignItems: "center",
+                      background: rowHover ? "rgba(255,255,255,0.05)" : "transparent",
+                    }}
+                  >
+                    <button
+                      onClick={() => setExpanded((m) => ({ ...m, [rid]: !open }))}
+                      aria-label={open ? "Collapse" : "Expand"}
                       style={{
-                        gridTemplateColumns:
-                          'minmax(220px, 2fr) 90px 140px 90px 90px 90px minmax(260px, 1fr) 220px',
+                        width: 24,
+                        height: 24,
+                        borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.18)",
+                        background: "rgba(255,255,255,0.08)",
+                        color: "rgba(255,255,255,0.95)",
+                        cursor: "pointer",
+                        fontWeight: 900,
                       }}
                     >
-                      <button
-                        className="text-left font-semibold hover:underline"
-                        onClick={() => setExpanded((cur) => (cur === r.id ? null : r.id))}
-                      >
-                        {r.name}
-                      </button>
+                      {open ? "–" : "+"}
+                    </button>
 
-                      <div>{r.position}</div>
-                      <div className="truncate">{r.archetype ?? '—'}</div>
-                      <div>{formatHeight(r.height_in)}</div>
-                      <div>{formatWeight(r.weight_lb)}</div>
-                      <div>{r.stars ? '★'.repeat(clamp(r.stars, 0, 5)) : '—'}</div>
-                      <div>{r.interest ?? '—'}</div>
-
-                      <div className="sticky right-0 bg-white pl-2">
-                        <div className="flex flex-wrap items-center gap-2 justify-end">
-                          <button
-                            className="rounded-lg border px-2 py-1 text-xs hover:bg-black/5"
-                            onClick={() => toggleOffer(r.id)}
-                          >
-                            Make Offer
-                          </button>
-                          <button
-                            className="rounded-lg border px-2 py-1 text-xs hover:bg-black/5"
-                            onClick={() => toggleBoard(r.id)}
-                          >
-                            Add Board
-                          </button>
-                        </div>
-                      </div>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <div style={{ fontWeight: 850, color: "rgba(255,255,255,0.96)" }}>{getName(r)}</div>
+                      {/* REMOVED: ID display under name */}
                     </div>
 
-                    {isOpen && (
-                      <div className="bg-black/2 px-3 pb-3">
-                        <div className="grid gap-3 pt-2 md:grid-cols-2">
-                          <div className="rounded-xl border bg-white p-3">
-                            <div className="mb-2 text-xs font-semibold opacity-70">Contacts</div>
-                            <div className="flex flex-wrap gap-2">
-                              {CONTACT_TYPES.map((c) => {
-                                const k = usedKey(r.id, c.key);
-                                const used = !!usedContacts[k];
+                    <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getPos(r)}</div>
+                    <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: getArch(r) ? 1 : 0.6 }}>
+                      {getArch(r) || "—"}
+                    </div>
+                    <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: r.height_in ? 1 : 0.6 }}>
+                      {fmtHeight(r.height_in) || "—"}
+                    </div>
+                    <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750, opacity: r.weight_lb ? 1 : 0.6 }}>
+                      {r.weight_lb ? `${r.weight_lb}` : "—"}
+                    </div>
+                    <div style={{ color: "rgba(255,255,255,0.90)", fontWeight: 750 }}>{getStars(r)}</div>
 
+                    <InterestBar value={myInterest} />
+
+                    <ActionButton variant="secondary" onClick={() => onToggleBoard(r)} disabled={Boolean(busy[`board:${rid}`])}>
+                      {busy[`board:${rid}`] ? "…" : onBoard ? "On Board" : "Add"}
+                    </ActionButton>
+
+                    <ActionButton variant="primary" onClick={() => onToggleOffer(r)} disabled={Boolean(busy[rid])}>
+                      {busy[rid] ? "…" : offered ? "Remove Offer" : "Make Offer"}
+                    </ActionButton>
+                  </div>
+
+                  {open ? (
+                    <div style={{ padding: "0 12px 12px 48px", display: "grid", gap: 14 }}>
+                      {/* CONTACT ACTIONS */}
+                      <div>
+                        <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Contact</div>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 10,
+                            alignItems: "center",
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(255,255,255,0.05)",
+                            borderRadius: 14,
+                            padding: 10,
+                          }}
+                        >
+                          <ContactButton
+                            used={usedText}
+                            disabled={usedText || Boolean(busy[`contact:text:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "text")}
+                          >
+                            {busy[`contact:text:${rid}`] ? "…" : usedText ? "Text ✓" : "Text"}
+                          </ContactButton>
+
+                          <ContactButton
+                            used={usedDm}
+                            disabled={usedDm || Boolean(busy[`contact:dm:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "dm")}
+                          >
+                            {busy[`contact:dm:${rid}`] ? "…" : usedDm ? "DM ✓" : "DM"}
+                          </ContactButton>
+
+                          <ContactButton
+                            used={usedSocial}
+                            disabled={usedSocial || Boolean(busy[`contact:social:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "social")}
+                          >
+                            {busy[`contact:social:${rid}`] ? "…" : usedSocial ? "Social ✓" : "Social"}
+                          </ContactButton>
+
+                          <ContactButton
+                            used={usedCall}
+                            disabled={usedCall || Boolean(busy[`contact:call:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "call")}
+                          >
+                            {busy[`contact:call:${rid}`] ? "…" : usedCall ? "Call ✓" : "Call"}
+                          </ContactButton>
+
+                          <ContactButton
+                            used={usedCoach}
+                            disabled={usedCoach || Boolean(busy[`contact:coach_visit:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "coach_visit")}
+                          >
+                            {busy[`contact:coach_visit:${rid}`] ? "…" : usedCoach ? "Coach Visit ✓" : "Coach Visit"}
+                          </ContactButton>
+
+                          <ContactButton
+                            used={usedHome}
+                            disabled={usedHome || Boolean(busy[`contact:home_visit:${rid}`]) || pointsLeft <= 0}
+                            onClick={() => onContact(r, "home_visit")}
+                          >
+                            {busy[`contact:home_visit:${rid}`] ? "…" : usedHome ? "Home Visit ✓" : "Home Visit"}
+                          </ContactButton>
+
+                          <div style={{ flex: 1 }} />
+                          <StatusPill label={`Pts left: ${pointsLeft}`} tone={pointsLeft > 0 ? "ok" : "warn"} />
+                        </div>
+                      </div>
+
+                      {/* VISIT */}
+                      <div>
+                        <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Official Visit</div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 10,
+                            alignItems: "center",
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(255,255,255,0.05)",
+                            borderRadius: 14,
+                            padding: 10,
+                            maxWidth: 900,
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 800, opacity: 0.95 }}>
+                              {scheduledWeek ? (
+                                <>
+                                  Scheduled: <span style={{ fontVariantNumeric: "tabular-nums" }}>Week {scheduledWeek}</span>
+                                  {scheduledBonus != null ? <span style={{ opacity: 0.85 }}> • (+{scheduledBonus})</span> : null}
+                                </>
+                              ) : (
+                                <span style={{ opacity: 0.85 }}>No visit scheduled.</span>
+                              )}
+                            </div>
+
+                            {scheduledWeek ? (
+                              r.my_visit_applied ? (
+                                <StatusPill label="Applied ✅" tone="ok" />
+                              ) : (
+                                <StatusPill label="Pending" tone="warn" />
+                              )
+                            ) : null}
+                          </div>
+
+                          <div style={{ flex: 1 }} />
+
+                          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                            <label style={{ fontWeight: 800, opacity: 0.9 }}>Week</label>
+                            <select
+                              value={chosenWeek}
+                              onChange={(e) => setVisitWeekChoice((m) => ({ ...m, [rid]: Number(e.target.value) }))}
+                              style={{
+                                padding: "10px 12px",
+                                borderRadius: 10,
+                                border: "1px solid rgba(255,255,255,0.18)",
+                                background: "rgba(255,255,255,0.06)",
+                                color: "rgba(255,255,255,0.92)",
+                                outline: "none",
+                              }}
+                            >
+                              {Array.from({ length: 16 }).map((_, i) => {
+                                const wk = i + 1;
                                 return (
-                                  <button
-                                    key={c.key}
-                                    className={[
-                                      'rounded-lg border px-3 py-2 text-xs',
-                                      used
-                                        ? 'cursor-not-allowed bg-green-50 text-green-800 border-green-300'
-                                        : 'hover:bg-black/5',
-                                    ].join(' ')}
-                                    disabled={used}
-                                    onClick={() => applyContact(r.id, c.key)}
-                                  >
-                                    {c.label} {used ? '✓' : ''}
-                                  </button>
+                                  <option key={wk} value={wk}>
+                                    {wk}
+                                  </option>
                                 );
                               })}
-                            </div>
-                          </div>
+                            </select>
 
-                          <div className="rounded-xl border bg-white p-3">
-                            <div className="mb-2 text-xs font-semibold opacity-70">Official Visit</div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <button
-                                className="rounded-lg border px-3 py-2 text-xs hover:bg-black/5"
-                                onClick={async () => {
-                                  try {
-                                    const { error: rpcErr } = await supabase.rpc('schedule_recruit_visit_paid_v1', {
-                                      p_league_id: leagueId,
-                                      p_team_id: teamId,
-                                      p_recruit_id: r.id,
-                                      p_season: season,
-                                      p_week: week,
-                                    });
-                                    if (rpcErr) throw rpcErr;
-                                    await loadAll();
-                                  } catch (e: any) {
-                                    setError(e?.message ?? 'Failed to schedule visit');
-                                  }
-                                }}
-                              >
-                                Schedule Visit
-                              </button>
-
-                              <button
-                                className="rounded-lg border px-3 py-2 text-xs hover:bg-black/5"
-                                onClick={async () => {
-                                  try {
-                                    const { error: rpcErr } = await supabase.rpc('remove_recruit_visit_v1', {
-                                      p_league_id: leagueId,
-                                      p_team_id: teamId,
-                                      p_recruit_id: r.id,
-                                      p_season: season,
-                                      p_week: week,
-                                    });
-                                    if (rpcErr) throw rpcErr;
-                                    await loadAll();
-                                  } catch (e: any) {
-                                    setError(e?.message ?? 'Failed to remove visit');
-                                  }
-                                }}
-                              >
-                                Remove Visit
-                              </button>
-                            </div>
+                            {!scheduledWeek ? (
+                              <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                                {busy[`visit:${rid}`] ? "…" : "Schedule Visit"}
+                              </ActionButton>
+                            ) : (
+                              <>
+                                <ActionButton variant="secondary" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onScheduleVisit(r)}>
+                                  {busy[`visit:${rid}`] ? "…" : "Reschedule"}
+                                </ActionButton>
+                                <ActionButton variant="danger" disabled={Boolean(busy[`visit:${rid}`])} onClick={() => onRemoveVisit(r)}>
+                                  {busy[`visit:${rid}`] ? "…" : "Remove"}
+                                </ActionButton>
+                              </>
+                            )}
                           </div>
                         </div>
-
-                        <div className="h-2" />
                       </div>
-                    )}
-                  </div>
-                );
-              })}
 
-              {sortedRecruits.length === 0 && (
-                <div className="px-3 py-6 text-sm opacity-70">
-                  No recruits found.
-                  <div className="mt-2 text-xs opacity-70">
-                    This usually means your recruits live in a different table/view name or are protected by RLS.
-                  </div>
+                      {/* TOP 8 */}
+                      <div>
+                        <div style={{ fontWeight: 900, marginBottom: 8, color: "rgba(255,255,255,0.95)" }}>Top 8</div>
+
+                        {top8.length === 0 ? (
+                          <div style={{ opacity: 0.85 }}>No interest data yet.</div>
+                        ) : (
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 90px",
+                              maxWidth: 560,
+                              border: "1px solid rgba(255,255,255,0.14)",
+                              borderRadius: 14,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                gridColumn: "1 / -1",
+                                display: "grid",
+                                gridTemplateColumns: "1fr 90px",
+                                padding: "8px 10px",
+                                background: "rgba(255,255,255,0.10)",
+                                fontWeight: 900,
+                              }}
+                            >
+                              <div>School</div>
+                              <div style={{ textAlign: "right" }}>Interest</div>
+                            </div>
+
+                            {top8.map((t, idx) => (
+                              <React.Fragment key={`${rid}:${t.team_id}:${idx}`}>
+                                <div style={{ padding: "8px 10px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                                  {t.team_name}
+                                </div>
+                                <div
+                                  style={{
+                                    padding: "8px 10px",
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                                  }}
+                                >
+                                  {clamp(Number(t.interest ?? 0))}
+                                </div>
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              )}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </div>
-      </div>
-
-      <div className="mt-2 text-xs opacity-60">
-        Tip: If your screen is narrow, swipe/scroll horizontally — the Actions column stays pinned on the right.
       </div>
     </div>
   );
