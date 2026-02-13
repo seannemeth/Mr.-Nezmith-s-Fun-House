@@ -1,11 +1,20 @@
-
+// lib/supabaseAction.ts
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { getSupabaseEnv } from "./supabaseEnv";
 
+/**
+ * Server Action / Route Handler safe Supabase client:
+ * - can READ + WRITE cookies
+ */
 export function supabaseAction() {
-  const { url, anon } = getSupabaseEnv();
   const cookieStore = cookies();
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY on server.");
+  }
 
   return createServerClient(url, anon, {
     cookies: {
@@ -17,7 +26,7 @@ export function supabaseAction() {
       },
       remove(name: string, options: any) {
         cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-      }
-    }
+      },
+    },
   });
 }
