@@ -1,6 +1,6 @@
-// app/api/_debug/supabase-selftest/route.ts
+// src/app/api/_debug/supabase-selftest/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "../../../../lib/supabaseServer";
+import { supabaseServer } from "../../../../../lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
